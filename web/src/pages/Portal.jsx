@@ -107,14 +107,14 @@ export default function Portal() {
           ref={fileRef}
           type="file"
           multiple
-          accept="image/png,image/jpeg,image/gif,image/webp"
+          accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif,.heic,.heif"
           onChange={(e) => uploadFiles(e.target.files)}
           className="hidden"
         />
         <p className="text-sm text-zinc-300">
           {uploading ? "Uploading…" : "Drag & drop images here, or click to choose"}
         </p>
-        <p className="mt-1 text-xs text-zinc-500">PNG, JPEG, GIF, WebP · multiple files supported</p>
+        <p className="mt-1 text-xs text-zinc-500">PNG, JPEG, GIF, WebP, HEIC · multiple files supported</p>
       </div>
 
       {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
