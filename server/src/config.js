@@ -22,6 +22,8 @@ export const config = {
   cookieSecure: (process.env.COOKIE_SECURE || "true") === "true",
 
   maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES || 26214400),
+  // Max files accepted in a single bulk upload request.
+  maxUploadFiles: Number(process.env.MAX_UPLOAD_FILES || 50),
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS || 30),
 
   internalPrefix: process.env.INTERNAL_PREFIX || "/internal",

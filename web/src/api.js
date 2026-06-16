@@ -30,9 +30,10 @@ export const api = {
 
   listImages: () => request("/api/images/list"),
   deleteImage: (id) => request(`/api/images/${id}`, { method: "DELETE" }),
-  upload: (file, visibility) => {
+  // Bulk upload: accepts one or many files. Returns { results: [{name, ok, url, ...}] }.
+  upload: (files, visibility) => {
     const fd = new FormData();
-    fd.append("file", file);
+    for (const f of files) fd.append("file", f);
     fd.append("visibility", visibility);
     return request("/api/upload", { method: "POST", body: fd, isForm: true });
   },

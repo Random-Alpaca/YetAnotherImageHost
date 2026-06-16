@@ -115,14 +115,45 @@ Set at minimum:
 
 ## 6. Install the systemd service
 
+The `deploy/` folder isn't synced to the VM (only `server/` is), so don't `cp`
+from a repo path that won't exist there — write the unit directly:
+
 ```bash
-sudo cp /srv/app/server/../../deploy/image-hoster.service /etc/systemd/system/
-# (or scp deploy/image-hoster.service over)
+sudo tee /etc/systemd/system/image-hoster.service >/dev/null <<'EOF'
+[Unit]
+Description=Image Hoster app server
+After=network.target
+
+[Service]
+Type=simple
+User=imagehoster
+Group=imagehoster
+WorkingDirectory=/srv/app/server
+ExecStart=/usr/bin/node --env-file=/srv/app/server/.env src/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/images /srv/app
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now image-hoster
 sudo systemctl status image-hoster        # should be active (running)
 curl -s http://127.0.0.1:3000/api/health  # {"ok":true}
 ```
+
+(Alternatively `scp deploy/image-hoster.service` from your laptop to
+`/etc/systemd/system/` — just confirm the file actually arrives before
+`enable`.)
 
 ## 7. Build and deploy the web app
 
@@ -148,13 +179,23 @@ config is needed.)
 
 ## 8. Configure Nginx
 
+The repo isn't checked out on the VM (only `server/` is synced into
+`/srv/app/server`), so `cp deploy/nginx.conf` has nothing to copy. Either `scp`
+the file from your laptop, or write it directly on the VM. To copy from your
+laptop (in this repo):
+
 ```bash
-sudo cp deploy/nginx.conf /etc/nginx/sites-available/image-hoster
+scp deploy/nginx.conf imagehoster@YOUR_VM_IP:/tmp/nginx.conf   # or ubuntu@
+sudo mv /tmp/nginx.conf /etc/nginx/sites-available/image-hoster
 sudo sed -i 's/IMAGE_HOST_DOMAIN/img.jxue.ca/' /etc/nginx/sites-available/image-hoster
 sudo ln -sf /etc/nginx/sites-available/image-hoster /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+> The `ln -sf` creates the symlink before the target exists if you run it out of
+> order — `nginx -t` will then fail with `open() ".../image-hoster" failed`.
+> Make sure the file is actually in `sites-available` first.
 
 ## 9. DNS + TLS
 
