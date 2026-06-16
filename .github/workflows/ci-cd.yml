@@ -88,43 +88,38 @@ jobs:
       - name: Deploy to VM
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
+          # SSH_USER is the SERVICE user that owns /srv/app and runs the app
+          # (imagehoster). Deploying AS that user means every file written is
+          # already owned correctly — there is no cross-user ownership to
+          # reconcile, so no sudo/chown for any file operation. Root is used
+          # only to restart the service.
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
           SSH_OPTS="-i $HOME/.ssh/id_deploy -o IdentitiesOnly=yes"
           REMOTE="${SSH_USER}@${SSH_HOST}"
 
-          # 1. Stage into a writable temp dir (the SSH user can't write /srv/app).
-          ssh $SSH_OPTS "$REMOTE" 'rm -rf /tmp/ih-deploy && mkdir -p /tmp/ih-deploy/server /tmp/ih-deploy/web'
+          # Targets live under /srv/app, which the deploy user owns — plain mkdir,
+          # no sudo. rsync creates only the final path component, hence mkdir -p.
+          ssh $SSH_OPTS "$REMOTE" 'mkdir -p /srv/app/server /srv/app/web'
+
+          # Sync straight into place. --delete keeps the tree clean but never
+          # removes the excluded .env (live secrets) or node_modules (rebuilt by
+          # npm ci); data/ guards a local DB if one is configured under server/.
           rsync -az --delete -e "ssh $SSH_OPTS" \
             --exclude node_modules --exclude .env --exclude data \
-            server/ "$REMOTE:/tmp/ih-deploy/server/"
+            server/ "$REMOTE:/srv/app/server/"
           rsync -az --delete -e "ssh $SSH_OPTS" \
-            web/dist/ "$REMOTE:/tmp/ih-deploy/web/"
+            web/dist/ "$REMOTE:/srv/app/web/"
 
-          # 2. Move into place, install prod deps, restart. Requires the SSH user
-          #    to have passwordless sudo for these commands (see DEPLOY.md).
+          # Install prod deps and restart. Only the restart needs root.
           ssh $SSH_OPTS "$REMOTE" 'bash -seuo pipefail' <<'REMOTE_SCRIPT'
-            # Everything under /srv/app is owned by imagehoster (provisioning
-            # step 3: `chown -R imagehoster:imagehoster /srv/app`), so do the
-            # sync + install AS imagehoster. This keeps every file — including
-            # node_modules — imagehoster-owned (no root-owned files for npm to
-            # choke on) and is least-privilege: root is only used to restart.
-            #
-            # rsync creates only the final path component, so mkdir the targets
-            # first. --delete keeps the tree clean; never touch the live .env or
-            # the node_modules that npm ci rebuilds next.
-            sudo -u imagehoster mkdir -p /srv/app/server /srv/app/web
-            sudo -u imagehoster rsync -a --delete --exclude .env --exclude node_modules \
-              /tmp/ih-deploy/server/ /srv/app/server/
-            sudo -u imagehoster rsync -a --delete /tmp/ih-deploy/web/ /srv/app/web/
             cd /srv/app/server
-            sudo -u imagehoster npm ci --omit=dev
+            npm ci --omit=dev
             sudo systemctl restart image-hoster
-            rm -rf /tmp/ih-deploy
           REMOTE_SCRIPT
 
-          # 3. Health check — fail the deploy if the app didn't come back up.
+          # Health check — fail the deploy if the app didn't come back up.
           echo "Waiting for app to report healthy…"
           for i in $(seq 1 10); do
             if ssh $SSH_OPTS "$REMOTE" 'curl -fsS http://127.0.0.1:3000/api/health' >/dev/null 2>&1; then

@@ -224,9 +224,14 @@ sudo rsync -av --delete /tmp/web/ /srv/app/web/
 ## Automated deploys (GitHub Actions)
 
 `.github/workflows/ci-cd.yml` runs CI (build web + validate server) on every
-push/PR and, on a green push to `main`, deploys to this VM over SSH — the same
-stage-to-`/tmp` → sudo-rsync → `npm ci` → restart flow as above, plus a health
-check that fails the run if the app doesn't come back up.
+push/PR and, on a green push to `main`, deploys to this VM over SSH: rsync the
+code + web build straight into `/srv/app`, `npm ci`, restart, health-check.
+
+**The deploy connects AS the service user `imagehoster`** — the same user that
+owns `/srv/app` and runs the app. This is the key design choice: because the
+user writing the files is the user that owns and runs them, there is **no
+cross-user ownership to reconcile** — no `chown`, no `sudo` for any file
+operation, ever. Root is used only to restart the service.
 
 ### Repository secrets
 
@@ -234,34 +239,49 @@ Set these under **Settings → Secrets and variables → Actions**:
 
 | Secret             | Value                                                            |
 |--------------------|-----------------------------------------------------------------|
-| `SSH_PRIVATE_KEY`  | The private key whose public half is in the VM user's `authorized_keys`. Include the full PEM, header/footer lines and all. |
+| `SSH_PRIVATE_KEY`  | The deploy private key whose public half is in **`imagehoster`'s** `authorized_keys` (see below). Full PEM, header/footer and all. |
 | `SSH_HOST`         | VM public IP or domain (e.g. `img.jxue.ca`).                    |
-| `SSH_USER`         | Login user (e.g. `ubuntu`).                                     |
+| `SSH_USER`         | **`imagehoster`** — the service user, *not* `ubuntu`.          |
 | `SSH_KNOWN_HOSTS`  | *Recommended.* Output of `ssh-keyscan YOUR_VM_IP`. Pins the host key; without it the job falls back to trust-on-first-use. |
 
-### Server prerequisite — passwordless sudo for the deploy user
+### Server prerequisite — let the deploy key log in as `imagehoster`
 
-The workflow does all the sync + install **as `imagehoster`** (so every file,
-including `node_modules`, stays `imagehoster`-owned and `npm ci` can write), and
-only uses `root` to restart the service. The SSH user therefore needs to run a
-few commands via `sudo` without a TTY prompt. Add a scoped sudoers drop-in:
+`imagehoster` is created as a no-login system account, so give it a shell and
+authorize the deploy key:
 
 ```bash
+# 1. Give the service account a login shell so SSH can connect.
+sudo usermod -s /bin/bash imagehoster
+
+# 2. Authorize the deploy key (the PUBLIC half of SSH_PRIVATE_KEY).
+sudo install -d -m 700 -o imagehoster -g imagehoster /home/imagehoster/.ssh
+echo 'ssh-ed25519 AAAA...your-deploy-public-key... deploy' \
+  | sudo tee -a /home/imagehoster/.ssh/authorized_keys >/dev/null
+sudo chown imagehoster:imagehoster /home/imagehoster/.ssh/authorized_keys
+sudo chmod 600 /home/imagehoster/.ssh/authorized_keys
+
+# 3. Let ONLY the restart run as root, without a password.
 sudo tee /etc/sudoers.d/image-hoster-deploy >/dev/null <<'EOF'
-ubuntu ALL=(imagehoster) NOPASSWD: /usr/bin/mkdir, /usr/bin/rsync, /usr/bin/npm
-ubuntu ALL=(root)        NOPASSWD: /usr/bin/systemctl restart image-hoster
+imagehoster ALL=(root) NOPASSWD: /usr/bin/systemctl restart image-hoster
 EOF
 sudo chmod 440 /etc/sudoers.d/image-hoster-deploy
-sudo visudo -c   # validate
+sudo visudo -c
 ```
 
-This relies on **`/srv/app` being owned by `imagehoster`** (provisioning step 3:
-`sudo chown -R imagehoster:imagehoster /srv/app`). nginx (`www-data`) still serves
-`/srv/app/web` fine — the `755` dirs are world-readable. If a past run left
-root-owned files there, reset once with `sudo chown -R imagehoster:imagehoster /srv/app`.
+That's the whole prerequisite. It assumes `/srv/app` is owned by `imagehoster`
+(provisioning step 3: `sudo chown -R imagehoster:imagehoster /srv/app`); nginx
+(`www-data`) still serves `/srv/app/web` fine since the `755` dirs are
+world-readable. If past runs left root-owned files there, reset once:
 
-(Adjust the `ubuntu`/`imagehoster` names and binary paths — `which rsync npm
-mkdir systemctl` — if your image differs.)
+```bash
+sudo chown -R imagehoster:imagehoster /srv/app
+```
+
+> Adjust `imagehoster` / paths (`which npm systemctl`) if your setup differs.
+> Want to keep the system account locked down? Instead of a full shell you can
+> prefix the `authorized_keys` line with a forced command, or use
+> `usermod -s /bin/bash` now and harden later — key-only SSH for a deploy
+> account is a standard, low-risk pattern.
 
 ### First run
 
