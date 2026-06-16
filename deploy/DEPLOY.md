@@ -100,7 +100,11 @@ sudo -u imagehoster npm ci --omit=dev   # or: npm install --omit=dev
 ```bash
 sudo -u imagehoster cp /srv/app/server/.env.example /srv/app/server/.env
 sudo -u imagehoster nano /srv/app/server/.env
+sudo chmod 600 /srv/app/server/.env   # holds COOKIE_SECRET — owner-only
 ```
+
+> The file is owned by `imagehoster`, so edit it with `sudo -u imagehoster nano
+> …` (or `sudo nano …`) — your login user can't write it directly.
 
 Set at minimum:
 - `COOKIE_SECRET` — generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
