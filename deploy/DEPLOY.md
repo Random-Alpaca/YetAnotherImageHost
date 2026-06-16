@@ -237,20 +237,27 @@ Set these under **Settings → Secrets and variables → Actions**:
 
 ### Server prerequisite — passwordless sudo for the deploy user
 
-The workflow's SSH user must run a few commands via `sudo` without a TTY
-prompt. Add a scoped sudoers drop-in on the VM:
+The workflow does all the sync + install **as `imagehoster`** (so every file,
+including `node_modules`, stays `imagehoster`-owned and `npm ci` can write), and
+only uses `root` to restart the service. The SSH user therefore needs to run a
+few commands via `sudo` without a TTY prompt. Add a scoped sudoers drop-in:
 
 ```bash
 sudo tee /etc/sudoers.d/image-hoster-deploy >/dev/null <<'EOF'
-ubuntu ALL=(root)        NOPASSWD: /usr/bin/mkdir, /usr/bin/rsync, /usr/bin/chown, /usr/bin/systemctl restart image-hoster
-ubuntu ALL=(imagehoster) NOPASSWD: /usr/bin/npm
+ubuntu ALL=(imagehoster) NOPASSWD: /usr/bin/mkdir, /usr/bin/rsync, /usr/bin/npm
+ubuntu ALL=(root)        NOPASSWD: /usr/bin/systemctl restart image-hoster
 EOF
 sudo chmod 440 /etc/sudoers.d/image-hoster-deploy
 sudo visudo -c   # validate
 ```
 
-(Adjust the `ubuntu` username and binary paths — `which rsync npm systemctl` —
-if your image differs.)
+This relies on **`/srv/app` being owned by `imagehoster`** (provisioning step 3:
+`sudo chown -R imagehoster:imagehoster /srv/app`). nginx (`www-data`) still serves
+`/srv/app/web` fine — the `755` dirs are world-readable. If a past run left
+root-owned files there, reset once with `sudo chown -R imagehoster:imagehoster /srv/app`.
+
+(Adjust the `ubuntu`/`imagehoster` names and binary paths — `which rsync npm
+mkdir systemctl` — if your image differs.)
 
 ### First run
 
