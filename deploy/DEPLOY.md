@@ -31,43 +31,31 @@ VCN → your subnet → Security List → add **Ingress** rules:
 - Source `0.0.0.0/0`, TCP, dest port **80**
 - Source `0.0.0.0/0`, TCP, dest port **443**
 
-**b) The instance firewall.** Check which backend your image uses:
+**b) The instance firewall.** Oracle's Ubuntu images ship an nftables ruleset
+that is **managed by iptables-nft** — `sudo nft list ruleset` shows
+`table ip filter ... managed by iptables-nft, do not touch!`. Manage it with the
+`iptables` command (it writes through to that same ruleset); do **not** hand-edit
+it with raw `nft` or `/etc/nftables.conf`.
+
+The `INPUT` chain ends in a catch-all `reject`, so the new ACCEPTs must be
+inserted *before* that reject — appending after it does nothing:
 
 ```bash
-sudo nft list ruleset            # non-empty => nftables is in use
-```
+# Position of the catch-all REJECT in the INPUT chain
+REJ=$(sudo iptables -L INPUT --line-numbers -n | awk '/REJECT/{print $1; exit}')
 
-**If `nft` shows a ruleset (newer images):** the default chain ends with a
-catch-all reject, so new rules must be *inserted before it*, not appended.
-Find the input chain name and its handles:
+# Insert the web ports just above it
+sudo iptables -I INPUT "$REJ" -p tcp --dport 80  -j ACCEPT
+sudo iptables -I INPUT "$REJ" -p tcp --dport 443 -j ACCEPT
 
-```bash
-sudo nft -a list chain inet filter input   # note the chain name + the reject/drop rule's handle
-```
+# Verify — both ACCEPTs must appear ABOVE the REJECT line
+sudo iptables -L INPUT --line-numbers -n
 
-Insert the accepts ahead of that catch-all (replace `<H>` with the reject
-rule's handle; chain is usually `input` in table `inet filter`):
-
-```bash
-sudo nft insert rule inet filter input handle <H> tcp dport 80 accept
-sudo nft insert rule inet filter input handle <H> tcp dport 443 accept
-# persist across reboots
-sudo bash -c 'nft list ruleset > /etc/nftables.conf'
-sudo systemctl enable nftables
-```
-
-> If your input chain has no reject/drop at the end (default-accept), a plain
-> `sudo nft add rule inet filter input tcp dport {80,443} accept` is enough.
-
-**If `nft` is empty (older iptables-legacy images):**
-
-```bash
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+# Persist across reboots (install if missing: apt install iptables-persistent)
 sudo netfilter-persistent save
 ```
 
-Verify from your laptop after either path: `nc -vz YOUR_VM_IP 443`.
+Verify from your laptop: `nc -vz YOUR_VM_IP 443`.
 
 (SSH on 22 is already allowed; leave it.)
 
