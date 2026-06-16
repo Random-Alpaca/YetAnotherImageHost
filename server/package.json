@@ -1,0 +1,22 @@
+{
+  "name": "image-hoster-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Express app server for the image hoster: invite auth, upload, and X-Accel-Redirect private delivery.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node --env-file=.env src/index.js",
+    "dev": "node --env-file=.env --watch src/index.js",
+    "issue-password": "node --env-file=.env scripts/issue-password.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

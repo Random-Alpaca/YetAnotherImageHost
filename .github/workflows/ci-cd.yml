@@ -1,0 +1,130 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Read-only by default; the deploy job only needs to read the repo + artifact.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # CI: build the web app and validate the server. Runs on every push and PR.
+  # The deploy job is gated on this passing.
+  # ---------------------------------------------------------------------------
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: "**/package-lock.json"
+
+      - name: Build web app
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Validate server
+        working-directory: server
+        run: |
+          npm ci
+          # No test suite yet — syntax-check every source + script file so a
+          # broken import/typo can't reach the VM.
+          find src scripts -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # CD: deploy to the Oracle VM. Only on a push to main, only if CI passed.
+  # Mirrors the manual flow in deploy/DEPLOY.md: stage to /tmp, then sudo-rsync
+  # into /srv/app, npm ci, restart the systemd service, health-check.
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download web build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::SSH_KNOWN_HOSTS not set — falling back to ssh-keyscan (trust-on-first-use). Set it to pin the host key."
+            ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy to VM
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+          SSH_OPTS="-i $HOME/.ssh/id_deploy -o IdentitiesOnly=yes"
+          REMOTE="${SSH_USER}@${SSH_HOST}"
+
+          # 1. Stage into a writable temp dir (the SSH user can't write /srv/app).
+          ssh $SSH_OPTS "$REMOTE" 'rm -rf /tmp/ih-deploy && mkdir -p /tmp/ih-deploy/server /tmp/ih-deploy/web'
+          rsync -az --delete -e "ssh $SSH_OPTS" \
+            --exclude node_modules --exclude .env --exclude data \
+            server/ "$REMOTE:/tmp/ih-deploy/server/"
+          rsync -az --delete -e "ssh $SSH_OPTS" \
+            web/dist/ "$REMOTE:/tmp/ih-deploy/web/"
+
+          # 2. Move into place, install prod deps, restart. Requires the SSH user
+          #    to have passwordless sudo for these commands (see DEPLOY.md).
+          ssh $SSH_OPTS "$REMOTE" 'bash -seuo pipefail' <<'REMOTE_SCRIPT'
+            # --delete keeps the tree clean, but never touch the live .env or the
+            # node_modules that npm ci rebuilds next.
+            sudo rsync -a --delete --exclude .env --exclude node_modules \
+              /tmp/ih-deploy/server/ /srv/app/server/
+            sudo rsync -a --delete /tmp/ih-deploy/web/ /srv/app/web/
+            sudo chown -R imagehoster:www-data /srv/app/server /srv/app/web
+            cd /srv/app/server
+            sudo -u imagehoster npm ci --omit=dev
+            sudo systemctl restart image-hoster
+            rm -rf /tmp/ih-deploy
+          REMOTE_SCRIPT
+
+          # 3. Health check — fail the deploy if the app didn't come back up.
+          echo "Waiting for app to report healthy…"
+          for i in $(seq 1 10); do
+            if ssh $SSH_OPTS "$REMOTE" 'curl -fsS http://127.0.0.1:3000/api/health' >/dev/null 2>&1; then
+              echo "Healthy ✅"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::App did not become healthy after restart"
+          exit 1

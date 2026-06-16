@@ -1,0 +1,29 @@
+# /etc/systemd/system/image-hoster.service
+#
+# Runs the Express app as an unprivileged user on loopback. Nginx is the only
+# thing that proxies to it.
+[Unit]
+Description=Image Hoster app server
+After=network.target
+
+[Service]
+Type=simple
+User=imagehoster
+Group=imagehoster
+WorkingDirectory=/srv/app/server
+ExecStart=/usr/bin/node --env-file=/srv/app/server/.env src/index.js
+Restart=on-failure
+RestartSec=3
+
+# Hardening: the app only needs to read its own dir + write storage and DB.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/images /srv/app
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
