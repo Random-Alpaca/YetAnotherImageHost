@@ -4,9 +4,10 @@ import cookieParser from "cookie-parser";
 import { config } from "./config.js";
 import "./db.js"; // opens DB + runs migrations on import
 import authRoutes from "./routes/auth.js";
-import adminRoutes from "./routes/admin.js";
+import userRoutes from "./routes/users.js";
 import uploadRoutes from "./routes/upload.js";
 import imageRoutes, { privateRouter } from "./routes/images.js";
+import folderRoutes from "./routes/folders.js";
 
 const app = express();
 
@@ -23,9 +24,10 @@ if (config.devDirectServe) {
 }
 
 app.use("/api", authRoutes);
-app.use("/api/admin", adminRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api/images", imageRoutes);
+app.use("/api/folders", folderRoutes);
 app.use("/i", privateRouter);
 
 // Fallthrough 404 for unmatched API/image routes.

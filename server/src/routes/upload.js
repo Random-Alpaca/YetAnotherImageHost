@@ -1,5 +1,6 @@
 // POST /api/upload  (auth required, multipart/form-data)
 // Fields: file (one OR many images), visibility=public|private (default private)
+//         folder_id (optional) OR folder_name (optional; creates folder if missing)
 //
 // Bulk-capable: send any number of `file` parts. Each is validated and stored
 // independently, so one bad file doesn't sink the batch — the response carries
@@ -13,6 +14,7 @@ import convert from "heic-convert";
 import { requireAuth } from "../auth.js";
 import { config } from "../config.js";
 import { sniffImage, storeImage, publicUrlFor } from "../images.js";
+import { getOrCreateByName, getFolder } from "../folders.js";
 
 const router = Router();
 
@@ -36,6 +38,17 @@ router.post("/upload", requireAuth, upload.array("file", config.maxUploadFiles),
     if (files.length === 0) return res.status(400).json({ error: "at least one file is required" });
 
     const visibility = req.body.visibility === "public" ? "public" : "private";
+
+    // Resolve folder_id for the batch.
+    let folderId = req.body.folder_id || null;
+    if (!folderId && req.body.folder_name) {
+      const folder = getOrCreateByName(req.body.folder_name, req.cred.id);
+      folderId = folder.id;
+    } else if (folderId) {
+      // Validate it exists.
+      const folder = getFolder(folderId);
+      if (!folder) return res.status(400).json({ error: "folder_id not found" });
+    }
 
     const results = await Promise.all(files.map(async (file) => {
       let { buffer, originalname } = file;
@@ -62,8 +75,9 @@ router.post("/upload", requireAuth, upload.array("file", config.maxUploadFiles),
         originalName: originalname,
         mime: sniffed.mime,
         ext: sniffed.ext,
+        folderId,
       });
-      return { name: file.originalname, ok: true, id: img.id, visibility: img.visibility, url: publicUrlFor(img) };
+      return { name: file.originalname, ok: true, id: img.id, visibility: img.visibility, url: publicUrlFor(img), folder_id: img.folder_id };
     }));
 
     res.status(201).json({ results });

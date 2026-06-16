@@ -7,6 +7,7 @@ export default function Login() {
   const auth = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -19,8 +20,8 @@ export default function Login() {
     setError("");
     setBusy(true);
     try {
-      const { role } = await api.login(password);
-      auth.setRole(role);
+      const { role, username: uname } = await api.login(username, password);
+      auth.setAuth(role, uname);
       nav(loc.state?.from || "/", { replace: true });
     } catch (err) {
       setError(err.message);
@@ -32,19 +33,28 @@ export default function Login() {
     <div className="min-h-screen grid place-items-center px-4">
       <form onSubmit={submit} className="w-full max-w-sm">
         <h1 className="text-xl font-semibold mb-1">Image Hoster</h1>
-        <p className="text-sm text-zinc-500 mb-6">Enter your access password.</p>
+        <p className="text-sm text-zinc-500 mb-6">Sign in with your username and password.</p>
+        <input
+          type="text"
+          autoFocus
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="Username"
+          autoComplete="username"
+          className="w-full rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 outline-none focus:border-zinc-600 mb-3"
+        />
         <input
           type="password"
-          autoFocus
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="Password"
+          autoComplete="current-password"
           className="w-full rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 outline-none focus:border-zinc-600"
         />
         {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
         <button
           type="submit"
-          disabled={busy || !password}
+          disabled={busy || !username || !password}
           className="mt-4 w-full rounded-lg bg-zinc-100 text-zinc-900 font-medium py-2 disabled:opacity-50"
         >
           {busy ? "Signing in…" : "Sign in"}
