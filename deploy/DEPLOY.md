@@ -31,13 +31,43 @@ VCN → your subnet → Security List → add **Ingress** rules:
 - Source `0.0.0.0/0`, TCP, dest port **80**
 - Source `0.0.0.0/0`, TCP, dest port **443**
 
-**b) The instance firewall.** Oracle Ubuntu images ship with iptables rules:
+**b) The instance firewall.** Check which backend your image uses:
+
+```bash
+sudo nft list ruleset            # non-empty => nftables is in use
+```
+
+**If `nft` shows a ruleset (newer images):** the default chain ends with a
+catch-all reject, so new rules must be *inserted before it*, not appended.
+Find the input chain name and its handles:
+
+```bash
+sudo nft -a list chain inet filter input   # note the chain name + the reject/drop rule's handle
+```
+
+Insert the accepts ahead of that catch-all (replace `<H>` with the reject
+rule's handle; chain is usually `input` in table `inet filter`):
+
+```bash
+sudo nft insert rule inet filter input handle <H> tcp dport 80 accept
+sudo nft insert rule inet filter input handle <H> tcp dport 443 accept
+# persist across reboots
+sudo bash -c 'nft list ruleset > /etc/nftables.conf'
+sudo systemctl enable nftables
+```
+
+> If your input chain has no reject/drop at the end (default-accept), a plain
+> `sudo nft add rule inet filter input tcp dport {80,443} accept` is enough.
+
+**If `nft` is empty (older iptables-legacy images):**
 
 ```bash
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
 sudo netfilter-persistent save
 ```
+
+Verify from your laptop after either path: `nc -vz YOUR_VM_IP 443`.
 
 (SSH on 22 is already allowed; leave it.)
 
@@ -224,7 +254,7 @@ prompt. Add a scoped sudoers drop-in on the VM:
 
 ```bash
 sudo tee /etc/sudoers.d/image-hoster-deploy >/dev/null <<'EOF'
-ubuntu ALL=(root)        NOPASSWD: /usr/bin/rsync, /usr/bin/chown, /usr/bin/systemctl restart image-hoster
+ubuntu ALL=(root)        NOPASSWD: /usr/bin/mkdir, /usr/bin/rsync, /usr/bin/chown, /usr/bin/systemctl restart image-hoster
 ubuntu ALL=(imagehoster) NOPASSWD: /usr/bin/npm
 EOF
 sudo chmod 440 /etc/sudoers.d/image-hoster-deploy

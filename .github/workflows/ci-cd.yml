@@ -105,6 +105,10 @@ jobs:
           # 2. Move into place, install prod deps, restart. Requires the SSH user
           #    to have passwordless sudo for these commands (see DEPLOY.md).
           ssh $SSH_OPTS "$REMOTE" 'bash -seuo pipefail' <<'REMOTE_SCRIPT'
+            # Ensure the targets exist — rsync only creates the final path
+            # component, not missing parents, so a fresh VM would fail otherwise.
+            sudo mkdir -p /srv/app/server /srv/app/web
+
             # --delete keeps the tree clean, but never touch the live .env or the
             # node_modules that npm ci rebuilds next.
             sudo rsync -a --delete --exclude .env --exclude node_modules \
