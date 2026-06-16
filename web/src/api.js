@@ -30,12 +30,31 @@ export const api = {
 
   listImages: () => request("/api/images/list"),
   deleteImage: (id) => request(`/api/images/${id}`, { method: "DELETE" }),
-  // Bulk upload: accepts one or many files. Returns { results: [{name, ok, url, ...}] }.
-  upload: (files, visibility) => {
-    const fd = new FormData();
-    for (const f of files) fd.append("file", f);
-    fd.append("visibility", visibility);
-    return request("/api/upload", { method: "POST", body: fd, isForm: true });
+  // Bulk upload: each file is its own request, run with bounded concurrency.
+  // One file per request keeps every body under the per-file size limit (so a
+  // big batch never trips nginx's whole-body cap), and a single failure never
+  // sinks the rest. Returns { results: [{name, ok, url, ...}] } in input order.
+  upload: async (files, visibility, { concurrency = 4 } = {}) => {
+    const list = Array.from(files);
+    const results = new Array(list.length);
+    let next = 0;
+    async function worker() {
+      while (next < list.length) {
+        const i = next++;
+        const file = list[i];
+        try {
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("visibility", visibility);
+          const data = await request("/api/upload", { method: "POST", body: fd, isForm: true });
+          results[i] = data?.results?.[0] || { name: file.name, ok: false, error: "no result returned" };
+        } catch (err) {
+          results[i] = { name: file.name, ok: false, error: err.message };
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, worker));
+    return { results };
   },
 
   listPasswords: () => request("/api/admin/passwords"),
