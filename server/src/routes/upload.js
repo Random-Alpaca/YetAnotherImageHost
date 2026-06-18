@@ -42,7 +42,7 @@ router.post("/upload", requireAuth, upload.array("file", config.maxUploadFiles),
     // Resolve folder_id for the batch.
     let folderId = req.body.folder_id || null;
     if (!folderId && req.body.folder_name) {
-      const folder = getOrCreateByName(req.body.folder_name, req.cred.id);
+      const folder = getOrCreateByName(req.body.folder_name, req.cred.id, req.body.parent_id || null);
       folderId = folder.id;
     } else if (folderId) {
       // Validate it exists.

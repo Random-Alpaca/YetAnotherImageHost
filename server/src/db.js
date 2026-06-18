@@ -17,7 +17,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS credentials (
     id            TEXT PRIMARY KEY,
     label         TEXT,
-    username      TEXT UNIQUE,
+    username      TEXT,
     password_hash TEXT NOT NULL,
     role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin')),
     created_at    INTEGER NOT NULL,
@@ -62,12 +62,17 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_sessions_cred ON sessions(credential_id);
   CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at DESC);
-  CREATE INDEX IF NOT EXISTS idx_images_folder ON images(folder_id);
 `);
 
 // Additive idempotent migrations — guard with try/catch for ALTER TABLE
 // since these are no-ops if the column already exists (SQLite doesn't support
 // IF NOT EXISTS for columns).
+//
+// IMPORTANT: these must run BEFORE any index that references a migrated column
+// (e.g. idx_images_folder below). On an existing DB the CREATE TABLE statements
+// above are no-ops, so columns like folder_id only exist once these ALTERs run.
+// Note: SQLite ALTER TABLE ADD COLUMN cannot add a UNIQUE column — uniqueness on
+// username is enforced by a separate unique index created afterwards instead.
 
 function addColumnIfMissing(table, column, definition) {
   const cols = db.pragma(`table_info(${table})`).map((c) => c.name);
@@ -77,8 +82,15 @@ function addColumnIfMissing(table, column, definition) {
 }
 
 // credentials: username and created_by may be absent in old DBs
-addColumnIfMissing("credentials", "username", "TEXT UNIQUE");
+addColumnIfMissing("credentials", "username", "TEXT");
 addColumnIfMissing("credentials", "created_by", "TEXT REFERENCES credentials(id) ON DELETE SET NULL");
 
 // images: folder_id may be absent in old DBs
 addColumnIfMissing("images", "folder_id", "TEXT REFERENCES folders(id) ON DELETE SET NULL");
+
+// Indexes that depend on migrated columns — safe to create now that the columns
+// exist. The unique index also enforces username uniqueness (NULLs stay distinct).
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_credentials_username ON credentials(username);
+  CREATE INDEX IF NOT EXISTS idx_images_folder ON images(folder_id);
+`);

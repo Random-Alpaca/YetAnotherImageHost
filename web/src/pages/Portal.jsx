@@ -12,10 +12,10 @@ export default function Portal() {
 
   // --- Folder state ---
   const [folders, setFolders] = useState([]);
-  const [activeFolder, setActiveFolder] = useState(undefined); // undefined = All
-  const [uploadFolderId, setUploadFolderId] = useState(""); // "" = no folder
+  const [currentFolder, setCurrentFolder] = useState(null); // null = root
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
+  const [creatingFolder, setCreatingFolder] = useState(false);
 
   // --- Upload state ---
   const [visibility, setVisibility] = useState("private");
@@ -51,7 +51,8 @@ export default function Portal() {
   async function refresh(folder) {
     setLoading(true);
     try {
-      const { images } = await api.listImages(folder);
+      // Root shows only unfiled photos ("none"); inside a folder, that folder's photos.
+      const { images } = await api.listImages(folder === null ? "none" : folder);
       setImages(images || []);
     } catch (err) {
       setError(err.message);
@@ -62,14 +63,48 @@ export default function Portal() {
 
   useEffect(() => {
     refreshFolders();
-    refresh(undefined);
+    refresh(null);
   }, []);
 
-  // When activeFolder changes, re-fetch images for that folder
+  // Navigate into a folder (or root). Re-fetch that folder's photos.
   function selectFolder(folder) {
-    setActiveFolder(folder);
+    setCurrentFolder(folder);
     setSelected(new Set());
+    setShowNewFolder(false);
+    setNewFolderName("");
     refresh(folder);
+  }
+
+  // --- Derived folder helpers ---
+  const childFolders = folders.filter((f) => (f.parent_id || null) === currentFolder);
+
+  // Breadcrumb trail from root → currentFolder.
+  function breadcrumbTrail() {
+    const trail = [];
+    let id = currentFolder;
+    const byId = Object.fromEntries(folders.map((f) => [f.id, f]));
+    while (id) {
+      const f = byId[id];
+      if (!f) break;
+      trail.unshift(f);
+      id = f.parent_id || null;
+    }
+    return trail;
+  }
+  const trail = breadcrumbTrail();
+
+  // Full "A / B / C" path label for a folder id (used in the bulk-move dropdown).
+  function folderPath(id) {
+    const byId = Object.fromEntries(folders.map((f) => [f.id, f]));
+    const parts = [];
+    let cur = id;
+    while (cur) {
+      const f = byId[cur];
+      if (!f) break;
+      parts.unshift(f.name);
+      cur = f.parent_id || null;
+    }
+    return parts.join(" / ");
   }
 
   // --- Copy to clipboard ---
@@ -83,29 +118,48 @@ export default function Portal() {
     }
   }
 
-  // --- Upload ---
+  // --- Create a folder under the current folder (standalone, no upload) ---
+  async function onCreateFolder() {
+    const name = newFolderName.trim();
+    if (!name) return;
+    setCreatingFolder(true);
+    try {
+      await api.createFolder(name, currentFolder);
+      setNewFolderName("");
+      setShowNewFolder(false);
+      await refreshFolders();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCreatingFolder(false);
+    }
+  }
+
+  // --- Delete a folder (reparents contents up one level, server-side) ---
+  async function onDeleteFolder(folder) {
+    if (!confirm(`Delete folder "${folder.name}"? Its contents move up one level.`)) return;
+    try {
+      await api.deleteFolder(folder.id);
+      await refreshFolders();
+      await refresh(currentFolder);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  // --- Upload (always targets the current folder) ---
   async function uploadFiles(fileList) {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
     setUploading(true);
     setError("");
     try {
-      let folderOpts = {};
-      if (showNewFolder && newFolderName.trim()) {
-        folderOpts = { folderName: newFolderName.trim() };
-      } else if (uploadFolderId) {
-        folderOpts = { folderId: uploadFolderId };
-      }
+      const folderOpts = currentFolder ? { folderId: currentFolder } : {};
       const { results } = await api.upload(files, visibility, folderOpts);
       setResults(results);
       if (fileRef.current) fileRef.current.value = "";
-      // If a new folder was created, refresh folder list
-      if (showNewFolder && newFolderName.trim()) {
-        setNewFolderName("");
-        setShowNewFolder(false);
-        await refreshFolders();
-      }
-      await refresh(activeFolder);
+      await refreshFolders();
+      await refresh(currentFolder);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -173,7 +227,7 @@ export default function Portal() {
       await api.bulkImages("delete", Array.from(selected));
       setSelected(new Set());
       setSelectMode(false);
-      await refresh(activeFolder);
+      await refresh(currentFolder);
       await refreshFolders();
     } catch (err) {
       setError(err.message);
@@ -191,7 +245,7 @@ export default function Portal() {
       setShowBulkMove(false);
       setBulkFolderId("");
       setSelectMode(false);
-      await refresh(activeFolder);
+      await refresh(currentFolder);
       await refreshFolders();
     } catch (err) {
       setError(err.message);
@@ -203,57 +257,75 @@ export default function Portal() {
   const okResults = results.filter((r) => r.ok);
   const failResults = results.filter((r) => !r.ok);
 
-  // Folder label helpers
-  const folderLabel = (id) => {
-    if (id === undefined) return "All";
-    if (id === "none") return "Unfiled";
-    return folders.find((f) => f.id === id)?.name || id;
-  };
-
   return (
     <main className="max-w-5xl mx-auto px-4 py-8">
 
-      {/* ── Folder bar ── */}
-      {folders.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-6">
-          {/* All */}
+      {/* ── Breadcrumb + new-folder bar ── */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        <nav className="flex items-center gap-1 text-sm">
           <button
-            onClick={() => selectFolder(undefined)}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition
-              ${activeFolder === undefined
-                ? "bg-zinc-200 text-zinc-900"
-                : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
+            onClick={() => selectFolder(null)}
+            className={`rounded px-2 py-1 transition ${
+              currentFolder === null ? "text-zinc-100 font-medium" : "text-zinc-400 hover:text-zinc-200"
+            }`}
           >
-            All
+            Home
           </button>
-          {/* Unfiled */}
-          <button
-            onClick={() => selectFolder("none")}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition
-              ${activeFolder === "none"
-                ? "bg-zinc-200 text-zinc-900"
-                : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
-          >
-            Unfiled
-          </button>
-          {/* Per-folder chips */}
-          {folders.map((f) => (
+          {trail.map((f, i) => {
+            const last = i === trail.length - 1;
+            return (
+              <span key={f.id} className="flex items-center gap-1">
+                <span className="text-zinc-600">/</span>
+                <button
+                  onClick={() => selectFolder(f.id)}
+                  disabled={last}
+                  className={`rounded px-2 py-1 transition ${
+                    last ? "text-zinc-100 font-medium" : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  {f.name}
+                </button>
+              </span>
+            );
+          })}
+        </nav>
+
+        <div className="ml-auto flex items-center gap-2">
+          {showNewFolder ? (
+            <>
+              <input
+                type="text"
+                placeholder="Folder name"
+                value={newFolderName}
+                autoFocus
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && onCreateFolder()}
+                className="rounded-md bg-zinc-900 border border-zinc-800 px-2 py-1.5 text-sm w-40 focus:outline-none focus:border-zinc-600"
+              />
+              <button
+                onClick={onCreateFolder}
+                disabled={!newFolderName.trim() || creatingFolder}
+                className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600 disabled:opacity-50 transition"
+              >
+                {creatingFolder ? "…" : "Create"}
+              </button>
+              <button
+                onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}
+                className="text-xs text-zinc-500 hover:text-zinc-300"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
             <button
-              key={f.id}
-              onClick={() => selectFolder(f.id)}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition
-                ${activeFolder === f.id
-                  ? "bg-zinc-200 text-zinc-900"
-                  : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
+              onClick={() => setShowNewFolder(true)}
+              className="rounded-md bg-zinc-900 border border-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:text-zinc-100 hover:border-zinc-600 transition"
             >
-              {f.name}
-              {f.count != null && (
-                <span className="ml-1.5 opacity-60">{f.count}</span>
-              )}
+              + New folder
             </button>
-          ))}
+          )}
         </div>
-      )}
+      </div>
 
       {/* ── Upload controls ── */}
       <div className="flex flex-wrap items-center gap-3 mb-3">
@@ -267,48 +339,11 @@ export default function Portal() {
           <option value="public">Public (direct link)</option>
         </select>
         <span className="text-xs text-zinc-500">
-          New uploads will be <span className="text-zinc-300">{visibility}</span>.
+          New uploads will be <span className="text-zinc-300">{visibility}</span>, into{" "}
+          <span className="text-zinc-300">
+            {currentFolder === null ? "Home" : folderPath(currentFolder)}
+          </span>.
         </span>
-
-        {/* Folder picker for upload */}
-        <div className="flex items-center gap-2 ml-auto">
-          {showNewFolder ? (
-            <>
-              <input
-                type="text"
-                placeholder="New folder name"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                className="rounded-md bg-zinc-900 border border-zinc-800 px-2 py-1.5 text-sm w-36 focus:outline-none focus:border-zinc-600"
-              />
-              <button
-                onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}
-                className="text-xs text-zinc-500 hover:text-zinc-300"
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              <select
-                value={uploadFolderId}
-                onChange={(e) => setUploadFolderId(e.target.value)}
-                className="rounded-md bg-zinc-900 border border-zinc-800 px-2 py-1.5 text-sm"
-              >
-                <option value="">No folder</option>
-                {folders.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
-              <button
-                onClick={() => setShowNewFolder(true)}
-                className="text-xs text-zinc-400 hover:text-zinc-200 whitespace-nowrap"
-              >
-                + New folder
-              </button>
-            </>
-          )}
-        </div>
       </div>
 
       {/* ── Drag-and-drop zone ── */}
@@ -333,13 +368,6 @@ export default function Portal() {
           {uploading ? "Uploading…" : "Drag & drop images here, or click to choose"}
         </p>
         <p className="mt-1 text-xs text-zinc-500">PNG, JPEG, GIF, WebP, HEIC · multiple files supported</p>
-        {(showNewFolder ? newFolderName.trim() : uploadFolderId) && (
-          <p className="mt-1 text-xs text-zinc-400">
-            Uploading to: <span className="text-zinc-200">
-              {showNewFolder ? `"${newFolderName}" (new folder)` : folderLabel(uploadFolderId)}
-            </span>
-          </p>
-        )}
       </div>
 
       {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
@@ -394,8 +422,8 @@ export default function Portal() {
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs text-zinc-500">
             {images.length} image{images.length === 1 ? "" : "s"}
-            {activeFolder !== undefined && (
-              <span> in <span className="text-zinc-300">{folderLabel(activeFolder)}</span></span>
+            {currentFolder !== null && (
+              <span> in <span className="text-zinc-300">{folderPath(currentFolder)}</span></span>
             )}
           </p>
           <button
@@ -433,7 +461,7 @@ export default function Portal() {
               >
                 <option value="">Pick a folder…</option>
                 {folders.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
+                  <option key={f.id} value={f.id}>{folderPath(f.id)}</option>
                 ))}
               </select>
               <button
@@ -470,13 +498,47 @@ export default function Portal() {
         </div>
       )}
 
-      {/* ── Gallery grid ── */}
+      {/* ── Folder + image grid ── */}
       {loading ? (
         <p className="text-zinc-500">Loading…</p>
-      ) : images.length === 0 ? (
-        <p className="text-zinc-500">No images yet. Upload some above.</p>
+      ) : childFolders.length === 0 && images.length === 0 ? (
+        <p className="text-zinc-500">
+          {currentFolder === null
+            ? "No images yet. Upload some above, or create a folder."
+            : "This folder is empty."}
+        </p>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {/* Subfolder tiles first */}
+          {childFolders.map((f) => (
+            <div
+              key={f.id}
+              onClick={() => selectFolder(f.id)}
+              className="group relative flex flex-col justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3 h-40 cursor-pointer hover:border-zinc-600 transition"
+            >
+              <div className="flex items-start justify-between">
+                <svg className="w-8 h-8 text-zinc-500" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2Z" />
+                </svg>
+                {f.can_modify && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDeleteFolder(f); }}
+                    className="text-xs text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition"
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+              <div>
+                <p className="text-sm text-zinc-200 font-medium truncate">{f.name}</p>
+                <p className="text-xs text-zinc-500">
+                  {f.count} item{f.count === 1 ? "" : "s"}
+                </p>
+              </div>
+            </div>
+          ))}
+
+          {/* Image tiles */}
           {images.map((img) => {
             const visOp = visibilityOps[img.id];
             const isSelected = selected.has(img.id);

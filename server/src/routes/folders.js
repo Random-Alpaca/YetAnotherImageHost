@@ -11,16 +11,24 @@ import {
 const router = Router();
 
 // GET /api/folders — all authed users see all folders (shared space for now).
+// Each folder carries can_modify (owner-or-admin) so the client can gate delete.
 router.get("/", requireAuth, (req, res) => {
-  res.json({ folders: listFolders() });
+  const folders = listFolders().map((f) => ({
+    ...f,
+    can_modify: req.cred.role === "admin" || f.owner_id === req.cred.id,
+  }));
+  res.json({ folders });
 });
 
 // POST /api/folders — any authed user may create a folder.
 router.post("/", requireAuth, (req, res) => {
-  const { name } = req.body || {};
+  const { name, parent_id } = req.body || {};
   if (!name) return res.status(400).json({ error: "name required" });
+  if (parent_id && !getFolder(parent_id)) {
+    return res.status(400).json({ error: "parent_id not found" });
+  }
   try {
-    const folder = createFolder({ name, ownerId: req.cred.id });
+    const folder = createFolder({ name, ownerId: req.cred.id, parentId: parent_id || null });
     res.status(201).json(folder);
   } catch (err) {
     res.status(400).json({ error: err.message });

@@ -42,7 +42,8 @@ export const api = {
 
   // Folders
   listFolders: () => request("/api/folders"),
-  createFolder: (name) => request("/api/folders", { method: "POST", body: { name } }),
+  createFolder: (name, parentId) =>
+    request("/api/folders", { method: "POST", body: { name, parent_id: parentId ?? null } }),
   deleteFolder: (id) => request(`/api/folders/${id}`, { method: "DELETE" }),
 
   // Images — list with optional folder filter
