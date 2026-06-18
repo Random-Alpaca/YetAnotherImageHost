@@ -3,14 +3,18 @@
 Self-hosted image hosting on an Oracle Always-Free ARM VM. Nginx serves public
 images directly off disk; private images are authorized by an Express app and
 streamed by Nginx via `X-Accel-Redirect` (the app never touches the bytes).
-Access is **password-based with no open registration**: an admin issues
-revocable access passwords; anyone holding one can log in.
+Access is **username/password accounts with no open registration**: you must
+already be logged in to create an account, so accounts spread by invitation. An
+`admin` bootstraps the first account from the CLI.
 
 ## Pieces
 
-- **Login page** — enter a single access password to reach the protected portal.
-- **Portal** — everyone logged in can view and upload images; only `admin` can delete.
-- **Admin page** — issue new passwords (user or admin role) and revoke old ones.
+- **Login page** — username + password to reach the protected portal.
+- **Portal** — everyone logged in can view and upload images, organize them into
+  folders, toggle visibility, and delete; you can modify your own images, and
+  `admin` can modify anyone's.
+- **Account page** — change your own password.
+- **Admin page** — create user accounts (user or admin role) and revoke them.
 - **Public images** — served directly by Nginx at a public URL, no login needed.
 
 ## Architecture
@@ -32,20 +36,27 @@ when the app authorizes a request and returns an `X-Accel-Redirect` into the
 
 ## API
 
-| Method | Path                              | Auth   | Purpose                                    |
-|--------|-----------------------------------|--------|--------------------------------------------|
-| POST   | `/api/login`                      | no     | Password-only login → session cookie       |
-| GET    | `/api/me`                         | yes    | Current role                               |
-| POST   | `/api/logout`                     | yes    | Destroy session                            |
-| POST   | `/api/upload`                     | yes    | Upload image (`visibility=public\|private`) |
-| GET    | `/api/images/list`                | yes    | List all images (whole gallery)            |
-| DELETE | `/api/images/:id`                 | admin  | Delete an image                            |
-| POST   | `/api/admin/passwords`            | admin  | Issue a password (returns plaintext once)  |
-| GET    | `/api/admin/passwords`            | admin  | List passwords + status                    |
-| POST   | `/api/admin/passwords/:id/revoke` | admin  | Revoke a password (kills live sessions)    |
-| GET    | `/i/private/:id`                  | yes    | Authorized private image (X-Accel-Redirect)|
-| GET    | `/i/public/<year>/<id>.<ext>`     | no     | Public image (served by Nginx directly)    |
-| GET    | `/api/health`                     | no     | Liveness                                   |
+| Method | Path                          | Auth         | Purpose                                              |
+|--------|-------------------------------|--------------|------------------------------------------------------|
+| POST   | `/api/login`                  | no           | Username+password login → session cookie             |
+| GET    | `/api/me`                     | yes          | Current username + role                              |
+| POST   | `/api/logout`                 | yes          | Destroy session                                      |
+| POST   | `/api/me/password`            | yes          | Change own password                                  |
+| POST   | `/api/users`                  | yes¹         | Create an account (¹admin role requires admin)       |
+| GET    | `/api/users`                  | admin        | List accounts                                        |
+| POST   | `/api/users/:id/revoke`       | admin        | Revoke an account (kills its live sessions)          |
+| POST   | `/api/upload`                 | yes          | Upload image(s) (`visibility`, `folder_id`/`folder_name`) |
+| GET    | `/api/images/list`            | yes          | List images (`?folder=<id>\|none` to filter)         |
+| PATCH  | `/api/images/:id`             | owner/admin  | Set an image's folder                                |
+| PATCH  | `/api/images/:id/visibility`  | owner/admin  | Toggle public/private (moves the file)               |
+| POST   | `/api/images/bulk`            | owner/admin² | Bulk `delete` or `move` (²checked per image)         |
+| DELETE | `/api/images/:id`             | owner/admin  | Delete an image                                      |
+| GET    | `/api/folders`                | yes          | List folders (with recursive image counts)           |
+| POST   | `/api/folders`                | yes          | Create a folder                                      |
+| DELETE | `/api/folders/:id`            | owner/admin  | Delete a folder (reparents its contents up one level)|
+| GET    | `/i/private/:id`              | yes          | Authorized private image (X-Accel-Redirect)          |
+| GET    | `/i/public/<year>/<id>.<ext>` | no           | Public image (served by Nginx directly)              |
+| GET    | `/api/health`                 | no           | Liveness                                             |
 
 ## Local development
 
@@ -58,8 +69,8 @@ cp .env.example .env        # set COOKIE_SECRET; point STORAGE_*/DB_PATH at loca
 npm install
 npm run dev                 # http://127.0.0.1:3000
 
-# 2) bootstrap the first admin password (printed once)
-npm run issue-password -- --role admin --label "me"
+# 2) bootstrap the first admin account (generated password printed once)
+npm run create-user -- --username me --role admin
 
 # 3) web (separate terminal)
 cd ../web
@@ -94,19 +105,21 @@ SSH on a green push to `main`. Required secrets and the one server prerequisite
 ## Project layout
 
 ```
-server/   Express API (login, upload, admin, private authorization) + issue-password CLI
-web/      React + Vite + Tailwind SPA (login / portal / admin)
+server/   Express API (login, accounts, upload, private authorization) + create-user CLI
+web/      React + Vite + Tailwind SPA (login / portal / account / admin)
 deploy/   nginx.conf, systemd unit, DEPLOY.md
 ```
 
 ## Security model
 
 - Private root is outside any public location; only the `internal;` block reads it.
-- Passwords are high-entropy random tokens (not user-chosen) — only their SHA-256
-  hash is stored, so a DB leak exposes no usable credentials.
+- Passwords are hashed with scrypt (per-credential random salt), so a DB leak
+  exposes no usable credentials. Session tokens are high-entropy random values,
+  stored only as their SHA-256 hash.
 - Uploads validated by magic bytes (not extension), size-capped, stored under
-  opaque ids in `YYYY/` subdirs.
-- Sessions are server-side rows (instantly revocable — revoking a password drops
+  opaque ids in `YYYY/` subdirs. HEIC/HEIF is transcoded to JPEG on upload.
+- Sessions are server-side rows (instantly revocable — revoking an account drops
   its live sessions), behind signed `httpOnly`/`Secure`/`SameSite=Lax` cookies.
-- Only `admin`-role sessions can delete images or manage passwords.
+- Image and folder mutations are owner-or-admin; listing/revoking accounts is
+  `admin`-only, and only `admin` sessions can create other admins.
 ```

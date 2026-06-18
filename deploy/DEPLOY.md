@@ -208,32 +208,33 @@ sudo certbot --nginx -d img.jxue.ca
 
 Certbot rewrites the server block to listen on 443 and sets up auto-renewal.
 
-## 10. Create your first (admin) password
+## 10. Create your first (admin) account
 
 The admin web page needs an admin session, which you can't have until an admin
-password exists — so bootstrap the first one from the CLI:
+account exists — so bootstrap the first one from the CLI:
 
 ```bash
 cd /srv/app/server
-sudo -u imagehoster npm run issue-password -- --role admin --label "me"
+sudo -u imagehoster npm run create-user -- --username me --role admin
 ```
 
-It prints the password **once**. Open `https://img.jxue.ca/`, paste it into the
-login page, and from the Admin page issue any further passwords (user or admin).
+It prints the generated password **once**. Open `https://img.jxue.ca/`, log in
+with that username and password, and from the Admin page create any further
+accounts (user or admin).
 
 ## 11. Smoke test the full flow
 
 ```bash
-# Log in with the admin password from step 9 -> session cookie
+# Log in with the admin account from step 10 -> session cookie
 curl -X POST https://img.jxue.ca/api/login \
   -H 'Content-Type: application/json' \
-  -d '{"password":"PASTE_PASSWORD"}' -c cookies.txt
-# -> {"role":"admin"}
+  -d '{"username":"me","password":"PASTE_PASSWORD"}' -c cookies.txt
+# -> {"role":"admin","username":"me"}
 
 # Upload a private image
 curl -X POST https://img.jxue.ca/api/upload \
   -b cookies.txt -F "file=@/path/to/photo.jpg" -F "visibility=private"
-# -> {"id":"...","visibility":"private","url":"/i/private/<id>"}
+# -> {"results":[{"name":"photo.jpg","ok":true,"id":"...","visibility":"private","url":"/i/private/<id>"}]}
 
 # Authorized fetch streams via X-Accel-Redirect:
 curl -b cookies.txt https://img.jxue.ca/i/private/<id> -o out.jpg   # 200
