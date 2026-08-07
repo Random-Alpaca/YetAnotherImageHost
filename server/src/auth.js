@@ -107,6 +107,20 @@ export async function changePassword(credId, currentPw, nextPw) {
   return { ok: true };
 }
 
+// CLI recovery: set a password without knowing the old one. No HTTP route
+// wraps this on purpose — shell access to the VM is the authorization.
+export async function setPassword(username, nextPw) {
+  const hash = await hashPassword(nextPw);
+  const info = db
+    .prepare(`UPDATE credentials SET password_hash = ? WHERE username = ? AND revoked_at IS NULL`)
+    .run(hash, username);
+  if (info.changes === 0) throw new Error(`no active user "${username}"`);
+  // Force re-login everywhere; a forgotten password may also be a leaked one.
+  db.prepare(
+    `DELETE FROM sessions WHERE credential_id = (SELECT id FROM credentials WHERE username = ?)`
+  ).run(username);
+}
+
 export function revokeUser(id) {
   const info = db
     .prepare(`UPDATE credentials SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`)

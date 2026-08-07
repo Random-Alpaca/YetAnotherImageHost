@@ -71,6 +71,8 @@ npm run dev                 # http://127.0.0.1:3000
 
 # 2) bootstrap the first admin account (generated password printed once)
 npm run create-user -- --username me --role admin
+#    forgot it later? reset (keeps role, logs that account out everywhere):
+#    npm run create-user -- --reset --username me
 
 # 3) web (separate terminal)
 cd ../web

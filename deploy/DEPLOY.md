@@ -222,6 +222,20 @@ It prints the generated password **once**. Open `https://img.jxue.ca/`, log in
 with that username and password, and from the Admin page create any further
 accounts (user or admin).
 
+### Locked out?
+
+If every admin password is lost, the same CLI resets one. The role is kept and
+all of that account's sessions are dropped:
+
+```bash
+cd /srv/app/server
+sudo -u imagehoster npm run create-user -- --reset --username me
+```
+
+`sudo -u imagehoster` matters — the service user owns the DB, and `.env` is
+`0600`. Shell access to the VM *is* the authorization here; there is deliberately
+no HTTP reset route.
+
 ## 11. Smoke test the full flow
 
 ```bash
