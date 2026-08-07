@@ -1,8 +1,8 @@
-// /api/users — create, list, and revoke user accounts.
+// /api/users — create, list, revoke, and delete user accounts.
 // Any authed user can create accounts (but only admins may create admin accounts).
-// Listing and revocation are admin-only.
+// Listing, revocation, and deletion are admin-only.
 import { Router } from "express";
-import { requireAuth, requireAdmin, createUser, listUsers, revokeUser } from "../auth.js";
+import { requireAuth, requireAdmin, createUser, listUsers, revokeUser, deleteUser } from "../auth.js";
 
 const router = Router();
 
@@ -42,6 +42,21 @@ router.post("/:id/revoke", requireAdmin, (req, res) => {
   const ok = revokeUser(req.params.id);
   if (!ok) return res.status(404).json({ error: "not found or already revoked" });
   res.json({ ok: true });
+});
+
+// Permanently delete a user account. Admin only. Can't delete yourself (avoid
+// locking yourself out) or the last active admin (avoid locking everyone out).
+router.delete("/:id", requireAdmin, (req, res) => {
+  if (req.params.id === req.cred.id) {
+    return res.status(400).json({ error: "cannot delete your own account" });
+  }
+  try {
+    const ok = deleteUser(req.params.id);
+    if (!ok) return res.status(404).json({ error: "not found" });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 export default router;

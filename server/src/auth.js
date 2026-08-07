@@ -135,6 +135,22 @@ export function adminExists() {
     .get();
 }
 
+// Permanently remove an account. Unlike revoke, this deletes the row: sessions
+// cascade-delete and any images/folders it owned are reassigned to no one
+// (both already ON DELETE SET NULL/CASCADE — nothing else to clean up here).
+export function deleteUser(id) {
+  const cred = db.prepare(`SELECT role, revoked_at FROM credentials WHERE id = ?`).get(id);
+  if (!cred) return false;
+  if (cred.role === "admin" && !cred.revoked_at) {
+    const { n } = db
+      .prepare(`SELECT COUNT(*) n FROM credentials WHERE role = 'admin' AND revoked_at IS NULL AND id != ?`)
+      .get(id);
+    if (n === 0) throw new Error("cannot delete the last active admin");
+  }
+  db.prepare(`DELETE FROM credentials WHERE id = ?`).run(id);
+  return true;
+}
+
 // --- Login / sessions -------------------------------------------------------
 
 export function destroySession(token) {

@@ -34,11 +34,12 @@ export const api = {
   changePassword: (currentPassword, newPassword) =>
     request("/api/me/password", { method: "POST", body: { currentPassword, newPassword } }),
 
-  // User management (any authed user can create; admin-only list/revoke)
+  // User management (any authed user can create; admin-only list/revoke/delete)
   createUser: (username, password, role) =>
     request("/api/users", { method: "POST", body: { username, password, role } }),
   listUsers: () => request("/api/users"),
   revokeUser: (id) => request(`/api/users/${id}/revoke`, { method: "POST" }),
+  deleteUser: (id) => request(`/api/users/${id}`, { method: "DELETE" }),
 
   // Folders
   listFolders: () => request("/api/folders"),

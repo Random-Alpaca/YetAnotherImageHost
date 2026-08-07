@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { useAuth } from "../App.jsx";
 
 function fmtDate(ms) {
   return ms ? new Date(ms).toLocaleString() : "—";
 }
 
 export default function Admin() {
+  const auth = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -26,6 +28,16 @@ export default function Admin() {
     if (!confirm(`Revoke access for "${username}"? They will be logged out immediately.`)) return;
     try {
       await api.revokeUser(id);
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function onDelete(id, username) {
+    if (!confirm(`Permanently delete "${username}"? This cannot be undone — their images and folders stay, but become unowned.`)) return;
+    try {
+      await api.deleteUser(id);
       await refresh();
     } catch (err) {
       setError(err.message);
@@ -66,13 +78,21 @@ export default function Admin() {
                     ? <span className="text-zinc-600">revoked</span>
                     : <span className="text-emerald-400">active</span>}
                 </td>
-                <td className="py-2 text-right">
+                <td className="py-2 text-right space-x-3">
                   {!u.revoked_at && (
                     <button
                       onClick={() => onRevoke(u.id, u.username)}
                       className="text-red-400 hover:text-red-300"
                     >
                       Revoke
+                    </button>
+                  )}
+                  {u.username !== auth.username && (
+                    <button
+                      onClick={() => onDelete(u.id, u.username)}
+                      className="text-zinc-500 hover:text-red-400"
+                    >
+                      Delete
                     </button>
                   )}
                 </td>
