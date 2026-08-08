@@ -14,7 +14,7 @@ import convert from "heic-convert";
 import { requireAuth } from "../auth.js";
 import { config } from "../config.js";
 import { sniffImage, storeImage, publicUrlFor } from "../images.js";
-import { getOrCreateByName, getFolder } from "../folders.js";
+import { getOrCreateByName, getFolder, canAccessFolder } from "../folders.js";
 
 const router = Router();
 
@@ -27,10 +27,45 @@ function isHeic(buf) {
 }
 
 // Buffer in memory so we can sniff magic bytes before committing to disk.
-const upload = multer({
+export const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: config.maxUploadBytes, files: config.maxUploadFiles },
 });
+
+// Validate, convert, and store a batch. Never throws for a single bad file —
+// returns one result per input file so a batch degrades instead of failing.
+// Shared with the public-album upload route.
+export async function processFiles(files, { uploadedBy, visibility, folderId }) {
+  return Promise.all(files.map(async (file) => {
+    let { buffer, originalname } = file;
+
+    // Convert HEIC/HEIF to JPEG transparently before any other processing.
+    if (isHeic(buffer)) {
+      try {
+        buffer = Buffer.from(await convert({ buffer, format: "JPEG", quality: 0.92 }));
+        originalname = originalname.replace(/\.hei[cf]$/i, ".jpg");
+      } catch {
+        return { name: file.originalname, ok: false, error: "HEIC conversion failed" };
+      }
+    }
+
+    const sniffed = sniffImage(buffer);
+    if (!sniffed) {
+      return { name: file.originalname, ok: false, error: "unsupported or invalid image (jpeg/png/gif/webp only)" };
+    }
+
+    const img = storeImage({
+      buffer,
+      uploadedBy,
+      visibility,
+      originalName: originalname,
+      mime: sniffed.mime,
+      ext: sniffed.ext,
+      folderId,
+    });
+    return { name: file.originalname, ok: true, id: img.id, visibility: img.visibility, url: publicUrlFor(img), folder_id: img.folder_id };
+  }));
+}
 
 router.post("/upload", requireAuth, upload.array("file", config.maxUploadFiles), async (req, res, next) => {
   try {
@@ -45,41 +80,12 @@ router.post("/upload", requireAuth, upload.array("file", config.maxUploadFiles),
       const folder = getOrCreateByName(req.body.folder_name, req.cred.id, req.body.parent_id || null);
       folderId = folder.id;
     } else if (folderId) {
-      // Validate it exists.
       const folder = getFolder(folderId);
       if (!folder) return res.status(400).json({ error: "folder_id not found" });
+      if (!canAccessFolder(req.cred, folder)) return res.status(403).json({ error: "forbidden" });
     }
 
-    const results = await Promise.all(files.map(async (file) => {
-      let { buffer, originalname } = file;
-
-      // Convert HEIC/HEIF to JPEG transparently before any other processing.
-      if (isHeic(buffer)) {
-        try {
-          buffer = Buffer.from(await convert({ buffer, format: "JPEG", quality: 0.92 }));
-          originalname = originalname.replace(/\.hei[cf]$/i, ".jpg");
-        } catch {
-          return { name: file.originalname, ok: false, error: "HEIC conversion failed" };
-        }
-      }
-
-      const sniffed = sniffImage(buffer);
-      if (!sniffed) {
-        return { name: file.originalname, ok: false, error: "unsupported or invalid image (jpeg/png/gif/webp only)" };
-      }
-
-      const img = storeImage({
-        buffer,
-        uploadedBy: req.cred.id,
-        visibility,
-        originalName: originalname,
-        mime: sniffed.mime,
-        ext: sniffed.ext,
-        folderId,
-      });
-      return { name: file.originalname, ok: true, id: img.id, visibility: img.visibility, url: publicUrlFor(img), folder_id: img.folder_id };
-    }));
-
+    const results = await processFiles(files, { uploadedBy: req.cred.id, visibility, folderId });
     res.status(201).json({ results });
   } catch (err) {
     next(err);

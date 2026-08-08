@@ -5,6 +5,8 @@ import Login from "./pages/Login.jsx";
 import Portal from "./pages/Portal.jsx";
 import Admin from "./pages/Admin.jsx";
 import Account from "./pages/Account.jsx";
+import Signup from "./pages/Signup.jsx";
+import Album from "./pages/Album.jsx";
 
 // --- Auth context ---------------------------------------------------------
 const AuthCtx = createContext(null);
@@ -89,6 +91,9 @@ export default function App() {
       <Nav />
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        {/* Public: the only route a logged-out visitor can reach besides login. */}
+        <Route path="/a/:slug" element={<Album />} />
         <Route path="/" element={<Protected><Portal /></Protected>} />
         <Route path="/account" element={<Protected><Account /></Protected>} />
         <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />

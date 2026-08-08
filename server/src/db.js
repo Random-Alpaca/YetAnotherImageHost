@@ -60,6 +60,25 @@ db.exec(`
     FOREIGN KEY (folder_id)   REFERENCES folders(id) ON DELETE SET NULL
   );
 
+  -- Self-service account requests awaiting admin approval. The password is
+  -- hashed at request time, so a pending row is never a plaintext secret.
+  -- Approved and rejected rows are deleted, so this table IS the queue.
+  CREATE TABLE IF NOT EXISTS signup_requests (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    INTEGER NOT NULL
+  );
+
+  -- Per-user grants for folders with access = 'shared'.
+  CREATE TABLE IF NOT EXISTS folder_shares (
+    folder_id     TEXT NOT NULL,
+    credential_id TEXT NOT NULL,
+    PRIMARY KEY (folder_id, credential_id),
+    FOREIGN KEY (folder_id)     REFERENCES folders(id)      ON DELETE CASCADE,
+    FOREIGN KEY (credential_id) REFERENCES credentials(id)  ON DELETE CASCADE
+  );
+
   CREATE INDEX IF NOT EXISTS idx_sessions_cred ON sessions(credential_id);
   CREATE INDEX IF NOT EXISTS idx_images_created ON images(created_at DESC);
 `);
@@ -88,9 +107,17 @@ addColumnIfMissing("credentials", "created_by", "TEXT REFERENCES credentials(id)
 // images: folder_id may be absent in old DBs
 addColumnIfMissing("images", "folder_id", "TEXT REFERENCES folders(id) ON DELETE SET NULL");
 
+// folders: sharing/publishing. `access` is 'everyone' | 'admins' | 'shared' —
+// validated in the app, not by a CHECK, because ALTER TABLE can't add one.
+// Defaulting to 'everyone' keeps every pre-existing folder behaving as before.
+addColumnIfMissing("folders", "access", "TEXT NOT NULL DEFAULT 'everyone'");
+addColumnIfMissing("folders", "public_slug", "TEXT");        // non-null = shareable album
+addColumnIfMissing("folders", "public_upload", "INTEGER NOT NULL DEFAULT 0");
+
 // Indexes that depend on migrated columns — safe to create now that the columns
 // exist. The unique index also enforces username uniqueness (NULLs stay distinct).
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_credentials_username ON credentials(username);
   CREATE INDEX IF NOT EXISTS idx_images_folder ON images(folder_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_slug ON folders(public_slug);
 `);

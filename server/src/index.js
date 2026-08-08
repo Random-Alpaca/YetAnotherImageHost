@@ -8,6 +8,7 @@ import userRoutes from "./routes/users.js";
 import uploadRoutes from "./routes/upload.js";
 import imageRoutes, { privateRouter } from "./routes/images.js";
 import folderRoutes from "./routes/folders.js";
+import albumRoutes from "./routes/albums.js";
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.use("/api/users", userRoutes);
 app.use("/api", uploadRoutes);
 app.use("/api/images", imageRoutes);
 app.use("/api/folders", folderRoutes);
+app.use("/api/albums", albumRoutes);
 app.use("/i", privateRouter);
 
 // Fallthrough 404 for unmatched API/image routes.

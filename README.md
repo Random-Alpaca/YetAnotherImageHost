@@ -3,19 +3,27 @@
 Self-hosted image hosting on an Oracle Always-Free ARM VM. Nginx serves public
 images directly off disk; private images are authorized by an Express app and
 streamed by Nginx via `X-Accel-Redirect` (the app never touches the bytes).
-Access is **username/password accounts with no open registration**: you must
-already be logged in to create an account, so accounts spread by invitation. An
-`admin` bootstraps the first account from the CLI.
+Access is **username/password accounts, admin-approved**: anyone can request an
+account, but an admin has to approve it before the login works. An `admin`
+bootstraps the first account from the CLI.
 
 ## Pieces
 
 - **Login page** — username + password to reach the protected portal.
+- **Signup page** — request an account; it lands in the admin approval queue.
 - **Portal** — everyone logged in can view and upload images, organize them into
   folders, toggle visibility, and delete; you can modify your own images, and
   `admin` can modify anyone's.
+- **Folder sharing** — each folder is visible to *everyone signed in*, *admins
+  only*, or *specific people*, and can additionally be published as a **public
+  album**: a link-only page anyone can open without an account, optionally
+  accepting photos from visitors.
 - **Account page** — change your own password.
-- **Admin page** — create user accounts (user or admin role) and revoke them.
+- **Admin page** — approve/reject account requests, revoke and delete accounts.
 - **Public images** — served directly by Nginx at a public URL, no login needed.
+
+Logged-out visitors can reach exactly two things: the login/signup pages and
+public albums they hold the link to.
 
 ## Architecture
 
@@ -43,8 +51,14 @@ when the app authorizes a request and returns an `X-Accel-Redirect` into the
 | POST   | `/api/logout`                 | yes          | Destroy session                                      |
 | POST   | `/api/me/password`            | yes          | Change own password                                  |
 | POST   | `/api/users`                  | yes¹         | Create an account (¹admin role requires admin)       |
+| POST   | `/api/users/signup`           | no           | Request an account (queued for admin approval)       |
+| GET    | `/api/users/requests`         | admin        | Pending account requests                             |
+| POST   | `/api/users/requests/:id/approve` | admin    | Approve a request → creates the account              |
+| DELETE | `/api/users/requests/:id`     | admin        | Reject a request                                     |
+| GET    | `/api/users/names`            | yes          | id + username of active accounts (share picker)      |
 | GET    | `/api/users`                  | admin        | List accounts                                        |
 | POST   | `/api/users/:id/revoke`       | admin        | Revoke an account (kills its live sessions)          |
+| DELETE | `/api/users/:id`              | admin        | Delete an account                                    |
 | POST   | `/api/upload`                 | yes          | Upload image(s) (`visibility`, `folder_id`/`folder_name`) |
 | GET    | `/api/images/list`            | yes          | List images (`?folder=<id>\|none` to filter)         |
 | PATCH  | `/api/images/:id`             | owner/admin  | Set an image's folder                                |
@@ -53,7 +67,10 @@ when the app authorizes a request and returns an `X-Accel-Redirect` into the
 | DELETE | `/api/images/:id`             | owner/admin  | Delete an image                                      |
 | GET    | `/api/folders`                | yes          | List folders (with recursive image counts)           |
 | POST   | `/api/folders`                | yes          | Create a folder                                      |
+| PATCH  | `/api/folders/:id`            | owner/admin  | Sharing: `access`, `is_public`, `public_upload`, `shared_with` |
 | DELETE | `/api/folders/:id`            | owner/admin  | Delete a folder (reparents its contents up one level)|
+| GET    | `/api/albums/:slug`           | no           | A published album's name + images                    |
+| POST   | `/api/albums/:slug/upload`    | no³          | Visitor upload (³only if `public_upload` is on)      |
 | GET    | `/i/private/:id`              | yes          | Authorized private image (X-Accel-Redirect)          |
 | GET    | `/i/public/<year>/<id>.<ext>` | no           | Public image (served by Nginx directly)              |
 | GET    | `/api/health`                 | no           | Liveness                                             |
@@ -124,4 +141,15 @@ deploy/   nginx.conf, systemd unit, DEPLOY.md
   its live sessions), behind signed `httpOnly`/`Secure`/`SameSite=Lax` cookies.
 - Image and folder mutations are owner-or-admin; listing/revoking accounts is
   `admin`-only, and only `admin` sessions can create other admins.
+- Folder access is checked against **every ancestor**, so a permissive subfolder
+  can't be a side door into a restricted parent. Private image bytes are gated
+  by the same check (`canViewImage`), not just by having any session.
+- Signup requests store only a scrypt hash, and `POST /api/users/signup` answers
+  identically whether or not the username was free, so it can't enumerate users.
+- A public album's slug is 12 random bytes. Turning sharing off deletes the slug,
+  which permanently invalidates the old link — re-enabling issues a new one.
+  Visitor uploads are stored `private` so their bytes only ever leave through
+  the app's authorization.
+
+Run the access-control self-check with `cd server && node scripts/check-access.js`.
 ```

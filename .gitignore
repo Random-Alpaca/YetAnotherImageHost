@@ -3,6 +3,7 @@ dist/
 *.log
 server/.env
 server/data/
+.devdata/
 *.db
 *.db-wal
 *.db-shm

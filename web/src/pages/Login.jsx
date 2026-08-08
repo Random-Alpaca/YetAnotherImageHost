@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useLocation, Navigate } from "react-router-dom";
+import { useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useAuth } from "../App.jsx";
 
@@ -59,6 +59,9 @@ export default function Login() {
         >
           {busy ? "Signing in…" : "Sign in"}
         </button>
+        <Link to="/signup" className="mt-4 block text-center text-sm text-zinc-500 hover:text-zinc-300">
+          Need an account? Request one
+        </Link>
       </form>
     </div>
   );

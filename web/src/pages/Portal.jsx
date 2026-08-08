@@ -2,6 +2,116 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useAuth } from "../App.jsx";
 
+// Sharing panel for one folder: who can see it inside the portal, and whether
+// it's also published as a link-only album for people with no account.
+function FolderSharing({ folder, onChange, onError }) {
+  const [people, setPeople] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const albumUrl = folder.public_slug ? `${window.location.origin}/a/${folder.public_slug}` : null;
+
+  useEffect(() => {
+    api.userNames().then((d) => setPeople(d.users || [])).catch(() => {});
+  }, []);
+
+  async function patch(body) {
+    setBusy(true);
+    try {
+      onChange(await api.updateFolder(folder.id, body));
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const shared = folder.shared_with || [];
+
+  return (
+    <div className={`mb-6 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 space-y-4 ${busy ? "opacity-60" : ""}`}>
+      <div className="flex items-center gap-3">
+        <label className="text-sm text-zinc-300">Who can see this folder</label>
+        <select
+          value={folder.access || "everyone"}
+          onChange={(e) => patch({ access: e.target.value })}
+          className="rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-sm"
+        >
+          <option value="everyone">Everyone signed in</option>
+          <option value="admins">Admins only</option>
+          <option value="shared">Only specific people</option>
+        </select>
+      </div>
+
+      {folder.access === "shared" && (
+        <div className="flex flex-wrap gap-2">
+          {people.length === 0 && <span className="text-xs text-zinc-500">No other accounts yet.</span>}
+          {people.map((p) => {
+            const on = shared.includes(p.id);
+            return (
+              <button
+                key={p.id}
+                onClick={() =>
+                  patch({ shared_with: on ? shared.filter((x) => x !== p.id) : [...shared, p.id] })
+                }
+                className={`rounded-full px-3 py-1 text-xs transition border ${
+                  on
+                    ? "bg-zinc-200 text-zinc-900 border-zinc-200"
+                    : "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500"
+                }`}
+              >
+                {p.username}
+              </button>
+            );
+          })}
+          <span className="w-full text-xs text-zinc-500">
+            The owner and admins always have access.
+          </span>
+        </div>
+      )}
+
+      <div className="border-t border-zinc-800 pt-3 space-y-2">
+        <label className="flex items-center gap-2 text-sm text-zinc-300">
+          <input
+            type="checkbox"
+            checked={!!folder.public_slug}
+            onChange={(e) => patch({ is_public: e.target.checked })}
+          />
+          Share as a public album (anyone with the link, no account)
+        </label>
+        {albumUrl && (
+          <>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(albumUrl).catch(() => {});
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }}
+                className="shrink-0 rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300 hover:bg-zinc-700"
+              >
+                {copied ? "Copied" : "Copy link"}
+              </button>
+              <span className="truncate font-mono text-xs text-zinc-500">{albumUrl}</span>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <input
+                type="checkbox"
+                checked={!!folder.public_upload}
+                onChange={(e) => patch({ public_upload: e.target.checked })}
+              />
+              Let visitors add photos too
+            </label>
+            <p className="text-xs text-zinc-500">
+              Turning off public sharing issues a new link next time — the old one
+              stops working for good.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Portal() {
   const auth = useAuth();
 
@@ -16,6 +126,7 @@ export default function Portal() {
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [showShare, setShowShare] = useState(false);
 
   // --- Upload state ---
   const [visibility, setVisibility] = useState("private");
@@ -71,9 +182,13 @@ export default function Portal() {
     setCurrentFolder(folder);
     setSelected(new Set());
     setShowNewFolder(false);
+    setShowShare(false);
     setNewFolderName("");
     refresh(folder);
   }
+
+  // Folder currently open, from the folder list (carries sharing settings).
+  const openFolder = folders.find((f) => f.id === currentFolder) || null;
 
   // --- Derived folder helpers ---
   const childFolders = folders.filter((f) => (f.parent_id || null) === currentFolder);
@@ -291,6 +406,18 @@ export default function Portal() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
+          {openFolder?.can_modify && (
+            <button
+              onClick={() => setShowShare((v) => !v)}
+              className={`rounded-md border px-3 py-1.5 text-xs transition ${
+                openFolder.public_slug
+                  ? "border-emerald-800 bg-emerald-950/40 text-emerald-300 hover:border-emerald-600"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-zinc-100 hover:border-zinc-600"
+              }`}
+            >
+              {openFolder.public_slug ? "Shared publicly" : "Share"}
+            </button>
+          )}
           {showNewFolder ? (
             <>
               <input
@@ -326,6 +453,17 @@ export default function Portal() {
           )}
         </div>
       </div>
+
+      {/* ── Sharing panel for the open folder ── */}
+      {showShare && openFolder && (
+        <FolderSharing
+          folder={openFolder}
+          onError={setError}
+          onChange={(updated) =>
+            setFolders((fs) => fs.map((f) => (f.id === updated.id ? { ...f, ...updated } : f)))
+          }
+        />
+      )}
 
       {/* ── Upload controls ── */}
       <div className="flex flex-wrap items-center gap-3 mb-3">

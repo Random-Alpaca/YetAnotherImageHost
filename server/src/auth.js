@@ -45,11 +45,13 @@ export async function verifyPassword(pw, stored) {
 
 // --- Accounts (credentials) -----------------------------------------------
 
-export async function createUser({ username, password, role = "user", createdBy = null }) {
-  if (!username || !password) throw new Error("username and password required");
+// `passwordHash` is for approving a signup request, where the password was
+// hashed when the request was filed and the plaintext was never stored.
+export async function createUser({ username, password, passwordHash, role = "user", createdBy = null }) {
+  if (!username || !(password || passwordHash)) throw new Error("username and password required");
   if (!["user", "admin"].includes(role)) throw new Error("invalid role");
   const id = newId();
-  const hash = await hashPassword(password);
+  const hash = passwordHash || (await hashPassword(password));
   try {
     db.prepare(
       `INSERT INTO credentials (id, username, password_hash, role, created_at, created_by)
@@ -151,6 +153,46 @@ export function deleteUser(id) {
   return true;
 }
 
+// --- Signup requests (self-service, admin-approved) -------------------------
+
+// Filing a request is unauthenticated, so the response must not reveal whether
+// a username exists — callers report success either way; a collision just
+// leaves no row behind.
+export async function createSignupRequest(username, password) {
+  if (!username || !password) throw new Error("username and password required");
+  const taken =
+    db.prepare(`SELECT 1 FROM credentials WHERE username = ?`).get(username) ||
+    db.prepare(`SELECT 1 FROM signup_requests WHERE username = ?`).get(username);
+  if (taken) return false;
+  db.prepare(
+    `INSERT INTO signup_requests (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)`
+  ).run(newId(), username, await hashPassword(password), Date.now());
+  return true;
+}
+
+export function listSignupRequests() {
+  return db
+    .prepare(`SELECT id, username, created_at FROM signup_requests ORDER BY created_at ASC`)
+    .all();
+}
+
+export async function approveSignupRequest(id, approvedBy) {
+  const req = db.prepare(`SELECT * FROM signup_requests WHERE id = ?`).get(id);
+  if (!req) return null;
+  const user = await createUser({
+    username: req.username,
+    passwordHash: req.password_hash,
+    role: "user",
+    createdBy: approvedBy,
+  });
+  db.prepare(`DELETE FROM signup_requests WHERE id = ?`).run(id);
+  return user;
+}
+
+export function deleteSignupRequest(id) {
+  return db.prepare(`DELETE FROM signup_requests WHERE id = ?`).run(id).changes > 0;
+}
+
 // --- Login / sessions -------------------------------------------------------
 
 export function destroySession(token) {
@@ -176,6 +218,13 @@ export function requireAuth(req, res, next) {
   const cred = credForSessionToken(req.signedCookies?.sid);
   if (!cred) return res.status(401).json({ error: "unauthorized" });
   req.cred = cred;
+  next();
+}
+
+// Like requireAuth but never rejects — req.cred is null for anonymous callers.
+// Used by routes that serve both logged-in users and public album visitors.
+export function optionalAuth(req, res, next) {
+  req.cred = credForSessionToken(req.signedCookies?.sid);
   next();
 }
 

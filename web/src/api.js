@@ -38,14 +38,41 @@ export const api = {
   createUser: (username, password, role) =>
     request("/api/users", { method: "POST", body: { username, password, role } }),
   listUsers: () => request("/api/users"),
+  userNames: () => request("/api/users/names"),
   revokeUser: (id) => request(`/api/users/${id}/revoke`, { method: "POST" }),
   deleteUser: (id) => request(`/api/users/${id}`, { method: "DELETE" }),
+
+  // Signup requests (queue reviewed by admins)
+  signup: (username, password) =>
+    request("/api/users/signup", { method: "POST", body: { username, password } }),
+  listSignupRequests: () => request("/api/users/requests"),
+  approveSignupRequest: (id) => request(`/api/users/requests/${id}/approve`, { method: "POST" }),
+  rejectSignupRequest: (id) => request(`/api/users/requests/${id}`, { method: "DELETE" }),
 
   // Folders
   listFolders: () => request("/api/folders"),
   createFolder: (name, parentId) =>
     request("/api/folders", { method: "POST", body: { name, parent_id: parentId ?? null } }),
   deleteFolder: (id) => request(`/api/folders/${id}`, { method: "DELETE" }),
+  // Sharing: any subset of { access, is_public, public_upload, shared_with }
+  updateFolder: (id, patch) => request(`/api/folders/${id}`, { method: "PATCH", body: patch }),
+
+  // Public albums — no session needed, the slug is the credential
+  getAlbum: (slug) => request(`/api/albums/${slug}`),
+  albumUpload: async (slug, files) => {
+    const results = [];
+    for (const file of Array.from(files)) {
+      const fd = new FormData();
+      fd.append("file", file);
+      try {
+        const data = await request(`/api/albums/${slug}/upload`, { method: "POST", body: fd, isForm: true });
+        results.push(data?.results?.[0] || { name: file.name, ok: false, error: "no result returned" });
+      } catch (err) {
+        results.push({ name: file.name, ok: false, error: err.message });
+      }
+    }
+    return { results };
+  },
 
   // Images — list with optional folder filter
   listImages: (folder) => {

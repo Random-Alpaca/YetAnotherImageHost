@@ -2,8 +2,9 @@
 // toggle, folder assignment, and bulk operations.
 import { Router } from "express";
 import path from "node:path";
-import { requireAuth } from "../auth.js";
+import { requireAuth, optionalAuth } from "../auth.js";
 import { config } from "../config.js";
+import { getFolder, canAccessFolder, accessibleFolderIds } from "../folders.js";
 import {
   getImage,
   listImages,
@@ -22,12 +23,14 @@ const router = Router();
 // Returns images with uploaded_by, folder_id, can_modify.
 router.get("/list", requireAuth, (req, res) => {
   const folder = req.query.folder; // undefined = all, "none" = no folder, <id> = specific folder
-  const images = listImages({ folder });
-  const result = images.map((img) => ({
-    ...img,
-    can_modify: canModify(req.cred, img),
-  }));
-  res.json({ images: result });
+  if (folder && folder !== "none" && !canAccessFolder(req.cred, getFolder(folder))) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  const allowed = folder ? null : accessibleFolderIds(req.cred);
+  const images = listImages({ folder })
+    .filter((img) => !allowed || !img.folder_id || allowed.has(img.folder_id))
+    .map((img) => ({ ...img, can_modify: canModify(req.cred, img) }));
+  res.json({ images });
 });
 
 // PATCH /api/images/:id/visibility — owner-or-admin; moves file between roots.
@@ -98,13 +101,24 @@ export default router;
 
 // ---------------------------------------------------------------------------
 // Private byte delivery lives on its own router mounted at /i (see index.js):
-// GET /i/private/:id — authorize, then hand off to Nginx. Any valid session may
-// view (the portal is a shared space); the app never reads the file itself.
+// GET /i/private/:id — authorize, then hand off to Nginx. The app never reads
+// the file itself. Who may view:
+//   - anyone, if the image sits in a folder published as a public album
+//   - any valid session, if the image has no folder (the shared portal space)
+//   - otherwise, whoever may access its folder
+export function canViewImage(cred, img) {
+  const folder = img.folder_id ? getFolder(img.folder_id) : null;
+  if (folder?.public_slug) return true;
+  if (!cred) return false;
+  if (!folder) return true;
+  return canAccessFolder(cred, folder);
+}
+
 export const privateRouter = Router();
 
-privateRouter.get("/private/:id", requireAuth, (req, res) => {
+privateRouter.get("/private/:id", optionalAuth, (req, res) => {
   const img = getImage(req.params.id);
-  if (!img || img.visibility !== "private") {
+  if (!img || img.visibility !== "private" || !canViewImage(req.cred, img)) {
     return res.status(404).json({ error: "not found" });
   }
   res.setHeader("X-Content-Type-Options", "nosniff");
