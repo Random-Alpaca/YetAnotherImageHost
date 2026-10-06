@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
+import UploadProgress from "../UploadProgress.jsx";
 import { useAuth } from "../App.jsx";
 
 // Sharing panel for one folder: who can see it inside the portal, and whether
@@ -131,6 +132,7 @@ export default function Portal() {
   // --- Upload state ---
   const [visibility, setVisibility] = useState("private");
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [results, setResults] = useState([]);
   const [copied, setCopied] = useState("");
@@ -159,11 +161,19 @@ export default function Portal() {
     }
   }
 
-  async function refresh(folder) {
+  // Re-fetch until every just-uploaded id shows up (max 3 tries), so the grid
+  // never silently misses new photos. Returns the final image list.
+  async function refresh(folder, expectIds = []) {
     setLoading(true);
     try {
       // Root shows only unfiled photos ("none"); inside a folder, that folder's photos.
-      const { images } = await api.listImages(folder === null ? "none" : folder);
+      let images = [];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        ({ images } = await api.listImages(folder === null ? "none" : folder));
+        const have = new Set((images || []).map((i) => i.id));
+        if (expectIds.every((id) => have.has(id))) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
       setImages(images || []);
     } catch (err) {
       setError(err.message);
@@ -267,18 +277,23 @@ export default function Portal() {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
     setUploading(true);
+    setProgress({ done: 0, total: files.length });
     setError("");
     try {
-      const folderOpts = currentFolder ? { folderId: currentFolder } : {};
+      const folderOpts = {
+        ...(currentFolder ? { folderId: currentFolder } : {}),
+        onProgress: (done, total) => setProgress({ done, total }),
+      };
       const { results } = await api.upload(files, visibility, folderOpts);
       setResults(results);
       if (fileRef.current) fileRef.current.value = "";
       await refreshFolders();
-      await refresh(currentFolder);
+      await refresh(currentFolder, results.filter((r) => r.ok).map((r) => r.id));
     } catch (err) {
       setError(err.message);
     } finally {
       setUploading(false);
+      setProgress(null);
     }
   }
 
@@ -507,6 +522,8 @@ export default function Portal() {
         </p>
         <p className="mt-1 text-xs text-zinc-500">PNG, JPEG, GIF, WebP, HEIC · multiple files supported</p>
       </div>
+
+      <UploadProgress progress={progress} />
 
       {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
 

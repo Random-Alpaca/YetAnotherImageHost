@@ -59,7 +59,7 @@ export const api = {
 
   // Public albums — no session needed, the slug is the credential
   getAlbum: (slug) => request(`/api/albums/${slug}`),
-  albumUpload: async (slug, files) => {
+  albumUpload: async (slug, files, onProgress) => {
     const results = [];
     for (const file of Array.from(files)) {
       const fd = new FormData();
@@ -70,6 +70,7 @@ export const api = {
       } catch (err) {
         results.push({ name: file.name, ok: false, error: err.message });
       }
+      onProgress?.(results.length, files.length);
     }
     return { results };
   },
@@ -100,10 +101,11 @@ export const api = {
   // One file per request keeps every body under the per-file size limit (so a
   // big batch never trips nginx's whole-body cap), and a single failure never
   // sinks the rest. Returns { results: [{name, ok, url, ...}] } in input order.
-  upload: async (files, visibility, { concurrency = 4, folderId, folderName } = {}) => {
+  upload: async (files, visibility, { concurrency = 4, folderId, folderName, onProgress } = {}) => {
     const list = Array.from(files);
     const results = new Array(list.length);
     let next = 0;
+    let done = 0;
     async function worker() {
       while (next < list.length) {
         const i = next++;
@@ -122,6 +124,7 @@ export const api = {
         } catch (err) {
           results[i] = { name: file.name, ok: false, error: err.message };
         }
+        onProgress?.(++done, list.length);
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, worker));

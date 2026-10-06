@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../api.js";
+import UploadProgress from "../UploadProgress.jsx";
 
 export default function Album() {
   const { slug } = useParams();
@@ -11,6 +12,7 @@ export default function Album() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [failed, setFailed] = useState([]);
   const fileRef = useRef(null);
@@ -32,14 +34,16 @@ export default function Album() {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
     setUploading(true);
+    setProgress({ done: 0, total: files.length });
     setFailed([]);
     try {
-      const { results } = await api.albumUpload(slug, files);
+      const { results } = await api.albumUpload(slug, files, (done, total) => setProgress({ done, total }));
       setFailed(results.filter((r) => !r.ok));
       if (fileRef.current) fileRef.current.value = "";
       await refresh();
     } finally {
       setUploading(false);
+      setProgress(null);
     }
   }
 
@@ -78,6 +82,8 @@ export default function Album() {
           <p className="mt-1 text-xs text-zinc-500">PNG, JPEG, GIF, WebP, HEIC</p>
         </div>
       )}
+
+      <UploadProgress progress={progress} />
 
       {failed.length > 0 && (
         <ul className="mb-6 space-y-1">
