@@ -34,10 +34,10 @@ export default function Album() {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
     setUploading(true);
-    setProgress({ done: 0, total: files.length });
+    setProgress({ done: 0, total: files.length, loaded: 0, bytes: 1 });
     setFailed([]);
     try {
-      const { results } = await api.albumUpload(slug, files, (done, total) => setProgress({ done, total }));
+      const { results } = await api.albumUpload(slug, files, setProgress);
       setFailed(results.filter((r) => !r.ok));
       if (fileRef.current) fileRef.current.value = "";
       await refresh();

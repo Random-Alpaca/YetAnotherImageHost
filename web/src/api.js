@@ -23,6 +23,40 @@ async function request(path, { method = "GET", body, isForm = false } = {}) {
   return data;
 }
 
+// Multipart POST via XHR (fetch can't report upload progress). Same contract as
+// request(): resolves parsed JSON, rejects with the server's error message.
+function sendForm(path, body, onBytes) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => e.lengthComputable && onBytes?.(e.loaded);
+    xhr.onerror = () => reject(new Error("network error"));
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* no body */ }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return reject(new Error(data?.error || `request failed (${xhr.status})`));
+      }
+      resolve(data);
+    };
+    xhr.send(body);
+  });
+}
+
+// Aggregates per-file byte progress into onProgress({ done, total, loaded, bytes }).
+function tracker(files, onProgress) {
+  const per = files.map(() => 0);
+  const bytes = files.reduce((n, f) => n + f.size, 0) || 1;
+  let done = 0;
+  const emit = () =>
+    onProgress?.({ done, total: files.length, loaded: per.reduce((a, b) => a + b, 0), bytes });
+  return {
+    bytes: (i) => (loaded) => { per[i] = Math.min(loaded, files[i].size); emit(); },
+    finish: (i) => { per[i] = files[i].size; done++; emit(); },
+  };
+}
+
 export const api = {
   // Auth
   me: () => request("/api/me"),
@@ -60,17 +94,20 @@ export const api = {
   // Public albums — no session needed, the slug is the credential
   getAlbum: (slug) => request(`/api/albums/${slug}`),
   albumUpload: async (slug, files, onProgress) => {
+    const list = Array.from(files);
+    const t = tracker(list, onProgress);
     const results = [];
-    for (const file of Array.from(files)) {
+    for (const file of list) {
+      const i = results.length;
       const fd = new FormData();
       fd.append("file", file);
       try {
-        const data = await request(`/api/albums/${slug}/upload`, { method: "POST", body: fd, isForm: true });
+        const data = await sendForm(`/api/albums/${slug}/upload`, fd, t.bytes(i));
         results.push(data?.results?.[0] || { name: file.name, ok: false, error: "no result returned" });
       } catch (err) {
         results.push({ name: file.name, ok: false, error: err.message });
       }
-      onProgress?.(results.length, files.length);
+      t.finish(i);
     }
     return { results };
   },
@@ -105,7 +142,7 @@ export const api = {
     const list = Array.from(files);
     const results = new Array(list.length);
     let next = 0;
-    let done = 0;
+    const t = tracker(list, onProgress);
     async function worker() {
       while (next < list.length) {
         const i = next++;
@@ -119,12 +156,12 @@ export const api = {
           } else if (folderName) {
             fd.append("folder_name", folderName);
           }
-          const data = await request("/api/upload", { method: "POST", body: fd, isForm: true });
+          const data = await sendForm("/api/upload", fd, t.bytes(i));
           results[i] = data?.results?.[0] || { name: file.name, ok: false, error: "no result returned" };
         } catch (err) {
           results[i] = { name: file.name, ok: false, error: err.message };
         }
-        onProgress?.(++done, list.length);
+        t.finish(i);
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, worker));

@@ -277,12 +277,12 @@ export default function Portal() {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
     setUploading(true);
-    setProgress({ done: 0, total: files.length });
+    setProgress({ done: 0, total: files.length, loaded: 0, bytes: 1 });
     setError("");
     try {
       const folderOpts = {
         ...(currentFolder ? { folderId: currentFolder } : {}),
-        onProgress: (done, total) => setProgress({ done, total }),
+        onProgress: setProgress,
       };
       const { results } = await api.upload(files, visibility, folderOpts);
       setResults(results);
