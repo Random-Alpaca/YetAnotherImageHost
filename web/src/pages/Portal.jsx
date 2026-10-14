@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import UploadProgress from "../UploadProgress.jsx";
 import { useAuth } from "../App.jsx";
+import GalleryThumbnail from "../GalleryThumbnail.jsx";
+import usePagedGallery from "../usePagedGallery.js";
+
+const fetchImages = (folder, options) => api.listImages(folder, options);
 
 // Sharing panel for one folder: who can see it inside the portal, and whether
 // it's also published as a link-only album for people with no account.
@@ -115,15 +119,21 @@ function FolderSharing({ folder, onChange, onError }) {
 
 export default function Portal() {
   const auth = useAuth();
+  return <PortalContent key={`${auth.username}:${auth.role}`} />;
+}
 
-  // --- Images & loading ---
-  const [images, setImages] = useState([]);
-  const [loading, setLoading] = useState(true);
+function PortalContent() {
+  const { setAuth } = useAuth();
   const [error, setError] = useState("");
 
   // --- Folder state ---
   const [folders, setFolders] = useState([]);
+  const [foldersLoading, setFoldersLoading] = useState(true);
+  const foldersRequest = useRef(null);
+  const mounted = useRef(true);
   const [currentFolder, setCurrentFolder] = useState(null); // null = root
+  const gallery = usePagedGallery(currentFolder ?? "none", fetchImages);
+  const { images, loading, total } = gallery;
   const [newFolderName, setNewFolderName] = useState("");
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -153,48 +163,59 @@ export default function Portal() {
   const absUrl = (u) => (u && u.startsWith("http") ? u : window.location.origin + u);
 
   async function refreshFolders() {
+    if (!mounted.current) return;
+    foldersRequest.current?.abort();
+    const controller = new AbortController();
+    foldersRequest.current = controller;
     try {
-      const { folders } = await api.listFolders();
-      setFolders(folders || []);
-    } catch {
-      /* non-fatal — folders may not be implemented yet */
-    }
-  }
-
-  // Re-fetch until every just-uploaded id shows up (max 3 tries), so the grid
-  // never silently misses new photos. Returns the final image list.
-  async function refresh(folder, expectIds = []) {
-    setLoading(true);
-    try {
-      // Root shows only unfiled photos ("none"); inside a folder, that folder's photos.
-      let images = [];
-      for (let attempt = 0; attempt < 3; attempt++) {
-        ({ images } = await api.listImages(folder === null ? "none" : folder));
-        const have = new Set((images || []).map((i) => i.id));
-        if (expectIds.every((id) => have.has(id))) break;
-        await new Promise((r) => setTimeout(r, 500));
-      }
-      setImages(images || []);
+      const { folders } = await api.listFolders({ signal: controller.signal });
+      if (mounted.current && !controller.signal.aborted) setFolders(folders || []);
     } catch (err) {
-      setError(err.message);
+      if (mounted.current && !controller.signal.aborted) {
+        if (err.status === 401) {
+          setFolders([]);
+          setAuth(null, null);
+        }
+        setError(err.message);
+      }
     } finally {
-      setLoading(false);
+      if (mounted.current && !controller.signal.aborted) setFoldersLoading(false);
     }
   }
 
   useEffect(() => {
+    mounted.current = true;
     refreshFolders();
-    refresh(null);
+    return () => { mounted.current = false; foldersRequest.current?.abort(); };
   }, []);
 
-  // Navigate into a folder (or root). Re-fetch that folder's photos.
+  useEffect(() => {
+    const available = new Set(images.filter((image) => image.can_modify).map((image) => image.id));
+    setSelected((previous) => new Set([...previous].filter((id) => available.has(id))));
+  }, [images]);
+
+  useEffect(() => {
+    if (gallery.errorStatus === 401) {
+      setFolders([]);
+      setAuth(null, null);
+    }
+  }, [gallery.errorStatus, setAuth]);
+
+  // Navigation displays a cached listing immediately, then revalidates it.
   function selectFolder(folder) {
+    if (folder === currentFolder) {
+      gallery.refresh();
+      refreshFolders();
+    }
     setCurrentFolder(folder);
     setSelected(new Set());
+    setSelectMode(false);
+    setShowBulkMove(false);
     setShowNewFolder(false);
     setShowShare(false);
     setNewFolderName("");
-    refresh(folder);
+    setError("");
+    setVisibilityOps({});
   }
 
   // Folder currently open, from the folder list (carries sharing settings).
@@ -265,8 +286,7 @@ export default function Portal() {
     if (!confirm(`Delete folder "${folder.name}"? Its contents move up one level.`)) return;
     try {
       await api.deleteFolder(folder.id);
-      await refreshFolders();
-      await refresh(currentFolder);
+      await Promise.all([refreshFolders(), gallery.refresh({ invalidate: true })]);
     } catch (err) {
       setError(err.message);
     }
@@ -287,8 +307,7 @@ export default function Portal() {
       const { results } = await api.upload(files, visibility, folderOpts);
       setResults(results);
       if (fileRef.current) fileRef.current.value = "";
-      await refreshFolders();
-      await refresh(currentFolder, results.filter((r) => r.ok).map((r) => r.id));
+      await Promise.all([refreshFolders(), gallery.refresh({ invalidate: true })]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -308,8 +327,8 @@ export default function Portal() {
     if (!confirm("Delete this image permanently?")) return;
     try {
       await api.deleteImage(id);
-      setImages((imgs) => imgs.filter((i) => i.id !== id));
-      await refreshFolders();
+      gallery.update((imgs) => imgs.filter((i) => i.id !== id));
+      await Promise.all([refreshFolders(), gallery.refresh()]);
     } catch (err) {
       setError(err.message);
     }
@@ -320,14 +339,16 @@ export default function Portal() {
     const newVis = img.visibility === "public" ? "private" : "public";
     setVisibilityOps((prev) => ({ ...prev, [img.id]: { loading: true, newUrl: null } }));
     try {
-      const { url } = await api.setVisibility(img.id, newVis);
+      const updated = await api.setVisibility(img.id, newVis);
+      const { url } = updated;
       // Update the image in state and store the new URL for display
-      setImages((imgs) =>
+      gallery.update((imgs) =>
         imgs.map((i) =>
-          i.id === img.id ? { ...i, visibility: newVis, url } : i
+          i.id === img.id ? { ...i, ...updated, thumbnails: updated.thumbnails || [] } : i
         )
       );
       setVisibilityOps((prev) => ({ ...prev, [img.id]: { loading: false, newUrl: absUrl(url) } }));
+      await gallery.refresh();
     } catch (err) {
       setError(err.message);
       setVisibilityOps((prev) => ({ ...prev, [img.id]: { loading: false, newUrl: null } }));
@@ -357,8 +378,7 @@ export default function Portal() {
       await api.bulkImages("delete", Array.from(selected));
       setSelected(new Set());
       setSelectMode(false);
-      await refresh(currentFolder);
-      await refreshFolders();
+      await Promise.all([gallery.refresh({ invalidate: true }), refreshFolders()]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -375,8 +395,7 @@ export default function Portal() {
       setShowBulkMove(false);
       setBulkFolderId("");
       setSelectMode(false);
-      await refresh(currentFolder);
-      await refreshFolders();
+      await Promise.all([gallery.refresh({ invalidate: true }), refreshFolders()]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -474,9 +493,11 @@ export default function Portal() {
         <FolderSharing
           folder={openFolder}
           onError={setError}
-          onChange={(updated) =>
-            setFolders((fs) => fs.map((f) => (f.id === updated.id ? { ...f, ...updated } : f)))
-          }
+          onChange={(updated) => {
+            setFolders((fs) => fs.map((f) => (f.id === updated.id ? { ...f, ...updated } : f)));
+            gallery.refresh({ invalidate: true });
+            refreshFolders();
+          }}
         />
       )}
 
@@ -526,6 +547,12 @@ export default function Portal() {
       <UploadProgress progress={progress} />
 
       {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+      {gallery.error && (
+        <p role="alert" className="text-sm text-red-400 mb-4">
+          {gallery.error}{" "}
+          <button onClick={() => gallery.refresh()} className="underline hover:text-red-300">Retry loading photos</button>
+        </p>
+      )}
 
       {/* ── Upload results ── */}
       {results.length > 0 && (
@@ -576,21 +603,32 @@ export default function Portal() {
       {images.length > 0 && (
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs text-zinc-500">
-            {images.length} image{images.length === 1 ? "" : "s"}
+            {total} image{total === 1 ? "" : "s"}
+            {images.length < total && ` · ${images.length} loaded`}
             {currentFolder !== null && (
               <span> in <span className="text-zinc-300">{folderPath(currentFolder)}</span></span>
             )}
           </p>
-          <button
-            onClick={toggleSelectMode}
-            className={`text-xs px-3 py-1 rounded-md transition ${
-              selectMode
-                ? "bg-zinc-700 text-zinc-200"
-                : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
-            }`}
-          >
-            {selectMode ? "Cancel selection" : "Select"}
-          </button>
+          <div className="flex items-center gap-3">
+            {selectMode && (
+              <button
+                onClick={() => setSelected(new Set(images.filter((image) => image.can_modify).map((image) => image.id)))}
+                className="text-xs text-zinc-400 hover:text-zinc-200"
+              >
+                Select loaded
+              </button>
+            )}
+            <button
+              onClick={toggleSelectMode}
+              className={`text-xs px-3 py-1 rounded-md transition ${
+                selectMode
+                  ? "bg-zinc-700 text-zinc-200"
+                  : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
+              }`}
+            >
+              {selectMode ? "Cancel selection" : "Select"}
+            </button>
+          </div>
         </div>
       )}
 
@@ -654,16 +692,18 @@ export default function Portal() {
       )}
 
       {/* ── Folder + image grid ── */}
-      {loading ? (
+      {gallery.refreshing && <p role="status" className="text-xs text-zinc-500 mb-3">Updating photos…</p>}
+      {loading || foldersLoading ? (
         <p className="text-zinc-500">Loading…</p>
-      ) : childFolders.length === 0 && images.length === 0 ? (
+      ) : !gallery.hasData && gallery.error ? null
+      : childFolders.length === 0 && images.length === 0 ? (
         <p className="text-zinc-500">
           {currentFolder === null
             ? "No images yet. Upload some above, or create a folder."
             : "This folder is empty."}
         </p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+        <div aria-busy={gallery.refreshing || gallery.loadingMore} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {/* Subfolder tiles first */}
           {childFolders.map((f) => (
             <div
@@ -728,12 +768,7 @@ export default function Portal() {
                   rel="noreferrer"
                   onClick={(e) => selectMode && img.can_modify && (e.preventDefault(), toggleSelect(img.id))}
                 >
-                  <img
-                    src={img.url}
-                    alt={img.original_name || img.id}
-                    loading="lazy"
-                    className="w-full h-40 object-cover"
-                  />
+                  <GalleryThumbnail image={img} />
                 </a>
 
                 <figcaption className="flex flex-col gap-1 px-2 py-1.5 text-xs text-zinc-400">
@@ -782,6 +817,17 @@ export default function Portal() {
               </figure>
             );
           })}
+        </div>
+      )}
+      {gallery.nextCursor && (
+        <div className="mt-6 text-center">
+          <button
+            onClick={gallery.loadMore}
+            disabled={gallery.loadingMore || gallery.refreshing}
+            className="rounded-md border border-zinc-700 bg-zinc-900 px-5 py-2 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+          >
+            {gallery.loadingMore ? "Loading…" : "Load more"}
+          </button>
         </div>
       )}
     </main>

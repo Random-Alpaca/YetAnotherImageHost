@@ -13,24 +13,37 @@ import {
   setFolder,
   canModify,
   publicUrlFor,
+  parsePagination,
+  thumbnailsFor,
+  thumbnailRecords,
+  THUMBNAIL_VERSION,
+  THUMBNAIL_SIZES,
 } from "../images.js";
 
 const privateRoot = config.storagePrivate;
 
 const router = Router();
 
-// GET /api/images/list?folder=<id|"none"|unset>
+// GET /api/images/list?folder=<id|"none"|unset>&limit=48&cursor=<opaque>
 // Returns images with uploaded_by, folder_id, can_modify.
 router.get("/list", requireAuth, (req, res) => {
   const folder = req.query.folder; // undefined = all, "none" = no folder, <id> = specific folder
+  if (folder !== undefined && (typeof folder !== "string" || !folder)) {
+    return res.status(400).json({ error: "invalid folder" });
+  }
+  let pagination;
+  try {
+    pagination = parsePagination(req.query);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
   if (folder && folder !== "none" && !canAccessFolder(req.cred, getFolder(folder))) {
     return res.status(403).json({ error: "forbidden" });
   }
   const allowed = folder ? null : accessibleFolderIds(req.cred);
-  const images = listImages({ folder })
-    .filter((img) => !allowed || !img.folder_id || allowed.has(img.folder_id))
-    .map((img) => ({ ...img, can_modify: canModify(req.cred, img) }));
-  res.json({ images });
+  const page = listImages({ folder, allowedFolderIds: allowed, ...pagination });
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({ ...page, images: page.images.map((img) => ({ ...img, can_modify: canModify(req.cred, img) })) });
 });
 
 // PATCH /api/images/:id/visibility — owner-or-admin; moves file between roots.
@@ -45,7 +58,7 @@ router.patch("/:id/visibility", requireAuth, (req, res) => {
   }
 
   const updated = setVisibility(img, visibility);
-  res.json({ id: updated.id, visibility: updated.visibility, url: publicUrlFor(updated) });
+  res.json({ id: updated.id, visibility: updated.visibility, url: publicUrlFor(updated), thumbnails: thumbnailsFor(updated) });
 });
 
 // PATCH /api/images/:id — owner-or-admin; update folder_id.
@@ -116,20 +129,45 @@ export function canViewImage(cred, img) {
 
 export const privateRouter = Router();
 
-privateRouter.get("/private/:id", optionalAuth, (req, res) => {
+// Browsers may retain protected bytes, but must authorize every reuse. This
+// applies to original fallbacks as well as previews, including conditional GETs.
+privateRouter.use("/private", (req, res, next) => {
+  res.setHeader("Cache-Control", "private, no-cache, must-revalidate");
+  next();
+});
+
+function deliverPrivate(req, res, thumbnailSize = null) {
   const img = getImage(req.params.id);
   if (!img || img.visibility !== "private" || !canViewImage(req.cred, img)) {
     return res.status(404).json({ error: "not found" });
+  }
+  let storedPath = img.stored_path;
+  let mime = img.mime;
+  if (thumbnailSize !== null) {
+    const thumb = thumbnailRecords(img.id).find((record) =>
+      record.size === thumbnailSize && record.version === THUMBNAIL_VERSION);
+    if (!thumb) return res.status(404).json({ error: "not found" });
+    storedPath = thumb.stored_path;
+    mime = "image/webp";
   }
   res.setHeader("X-Content-Type-Options", "nosniff");
 
   // DEV: serve the bytes directly (no Nginx). PROD: hand off via X-Accel.
   if (config.devDirectServe) {
-    return res.sendFile(path.resolve(privateRoot, img.stored_path), {
-      headers: { "Content-Type": img.mime },
+    return res.sendFile(path.resolve(privateRoot, storedPath), {
+      cacheControl: false,
+      headers: { "Content-Type": mime },
     });
   }
-  res.setHeader("Content-Type", img.mime);
-  res.setHeader("X-Accel-Redirect", path.posix.join(config.internalPrefix, img.stored_path));
+  res.setHeader("Content-Type", mime);
+  res.setHeader("X-Accel-Redirect", path.posix.join(config.internalPrefix, storedPath));
   res.end();
+}
+
+privateRouter.get("/private/:id", optionalAuth, (req, res) => deliverPrivate(req, res));
+
+privateRouter.get("/private/:id/thumbnail/:size", optionalAuth, (req, res) => {
+  const size = THUMBNAIL_SIZES.find((size) => String(size) === req.params.size);
+  if (!size) return res.status(404).json({ error: "not found" });
+  return deliverPrivate(req, res, size);
 });

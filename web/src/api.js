@@ -1,7 +1,7 @@
 // Thin fetch wrapper. Always sends cookies; throws an Error with the server's
 // message on non-2xx so callers can show it.
-async function request(path, { method = "GET", body, isForm = false } = {}) {
-  const opts = { method, credentials: "include", headers: {} };
+async function request(path, { method = "GET", body, isForm = false, signal } = {}) {
+  const opts = { method, credentials: "include", headers: {}, signal };
   if (body != null) {
     if (isForm) {
       opts.body = body; // FormData; let the browser set the boundary
@@ -18,7 +18,9 @@ async function request(path, { method = "GET", body, isForm = false } = {}) {
     /* no body */
   }
   if (!res.ok) {
-    throw new Error(data?.error || `request failed (${res.status})`);
+    const error = new Error(data?.error || `request failed (${res.status})`);
+    error.status = res.status;
+    throw error;
   }
   return data;
 }
@@ -84,7 +86,7 @@ export const api = {
   rejectSignupRequest: (id) => request(`/api/users/requests/${id}`, { method: "DELETE" }),
 
   // Folders
-  listFolders: () => request("/api/folders"),
+  listFolders: (options) => request("/api/folders", options),
   createFolder: (name, parentId) =>
     request("/api/folders", { method: "POST", body: { name, parent_id: parentId ?? null } }),
   deleteFolder: (id) => request(`/api/folders/${id}`, { method: "DELETE" }),
@@ -92,7 +94,11 @@ export const api = {
   updateFolder: (id, patch) => request(`/api/folders/${id}`, { method: "PATCH", body: patch }),
 
   // Public albums — no session needed, the slug is the credential
-  getAlbum: (slug) => request(`/api/albums/${slug}`),
+  getAlbum: (slug, { limit = 48, cursor, signal } = {}) => {
+    const qs = new URLSearchParams({ limit });
+    if (cursor) qs.set("cursor", cursor);
+    return request(`/api/albums/${encodeURIComponent(slug)}?${qs}`, { signal });
+  },
   albumUpload: async (slug, files, onProgress) => {
     const list = Array.from(files);
     const t = tracker(list, onProgress);
@@ -113,13 +119,15 @@ export const api = {
   },
 
   // Images — list with optional folder filter
-  listImages: (folder) => {
-    const qs = folder !== undefined ? `?folder=${encodeURIComponent(folder)}` : "";
-    return request(`/api/images/list${qs}`);
+  listImages: (folder, { limit = 48, cursor, signal } = {}) => {
+    const qs = new URLSearchParams({ limit });
+    if (folder !== undefined) qs.set("folder", folder);
+    if (cursor) qs.set("cursor", cursor);
+    return request(`/api/images/list?${qs}`, { signal });
   },
   deleteImage: (id) => request(`/api/images/${id}`, { method: "DELETE" }),
 
-  // Visibility toggle → returns { id, visibility, url }
+  // Visibility toggle → returns { id, visibility, url, thumbnails }
   setVisibility: (id, visibility) =>
     request(`/api/images/${id}/visibility`, { method: "PATCH", body: { visibility } }),
 

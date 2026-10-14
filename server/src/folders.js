@@ -144,7 +144,11 @@ export function canAccessFolder(cred, folder) {
 
 // Set of folder ids this credential may see. Used to filter image listings.
 export function accessibleFolderIds(cred) {
-  return new Set(listFolders().filter((f) => canAccessFolder(cred, f)).map((f) => f.id));
+  // Image pagination only needs permissions, not the recursive image counts
+  // computed for the sidebar by listFolders(). Avoid counting every folder's
+  // contents again for every page of images.
+  const folders = db.prepare("SELECT id, parent_id, owner_id, access FROM folders").all();
+  return new Set(folders.filter((f) => canAccessFolder(cred, f)).map((f) => f.id));
 }
 
 // Find a folder by name (case-insensitive) under a given owner and parent, or

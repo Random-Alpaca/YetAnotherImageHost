@@ -36,9 +36,9 @@ jobs:
         working-directory: server
         run: |
           npm ci
-          # No test suite yet — syntax-check every source + script file so a
-          # broken import/typo can't reach the VM.
+          # Check syntax plus delivery, access control, and pagination behavior.
           find src scripts -name '*.js' -print0 | xargs -0 -n1 node --check
+          npm test
 
       - name: Upload web build
         uses: actions/upload-artifact@v4

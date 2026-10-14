@@ -14,6 +14,9 @@ bootstraps the first account from the CLI.
 - **Portal** — everyone logged in can view and upload images, organize them into
   folders, toggle visibility, and delete; you can modify your own images, and
   `admin` can modify anyone's.
+- **Gallery previews** — uploads get small WebP thumbnails while original links
+  keep the full image. Galleries load 48 images at a time, retain existing tiles
+  during refreshes, and let you load more. Bulk selection applies to loaded images.
 - **Folder sharing** — each folder is visible to *everyone signed in*, *admins
   only*, or *specific people*, and can additionally be published as a **public
   album**: a link-only page anyone can open without an account, optionally
@@ -60,7 +63,7 @@ when the app authorizes a request and returns an `X-Accel-Redirect` into the
 | POST   | `/api/users/:id/revoke`       | admin        | Revoke an account (kills its live sessions)          |
 | DELETE | `/api/users/:id`              | admin        | Delete an account                                    |
 | POST   | `/api/upload`                 | yes          | Upload image(s) (`visibility`, `folder_id`/`folder_name`) |
-| GET    | `/api/images/list`            | yes          | List images (`?folder=<id>\|none` to filter)         |
+| GET    | `/api/images/list`            | yes          | Page of images (`?folder=<id>\|none&limit=48&cursor=…`) |
 | PATCH  | `/api/images/:id`             | owner/admin  | Set an image's folder                                |
 | PATCH  | `/api/images/:id/visibility`  | owner/admin  | Toggle public/private (moves the file)               |
 | POST   | `/api/images/bulk`            | owner/admin² | Bulk `delete` or `move` (²checked per image)         |
@@ -69,11 +72,41 @@ when the app authorizes a request and returns an `X-Accel-Redirect` into the
 | POST   | `/api/folders`                | yes          | Create a folder                                      |
 | PATCH  | `/api/folders/:id`            | owner/admin  | Sharing: `access`, `is_public`, `public_upload`, `shared_with` |
 | DELETE | `/api/folders/:id`            | owner/admin  | Delete a folder (reparents its contents up one level)|
-| GET    | `/api/albums/:slug`           | no           | A published album's name + images                    |
+| GET    | `/api/albums/:slug`           | no           | A published album's name + paginated images (`limit`, `cursor`) |
 | POST   | `/api/albums/:slug/upload`    | no³          | Visitor upload (³only if `public_upload` is on)      |
-| GET    | `/i/private/:id`              | yes          | Authorized private image (X-Accel-Redirect)          |
+| GET    | `/i/private/:id`              | yes⁴         | Authorized private image (X-Accel-Redirect)          |
+| GET    | `/i/private/:id/thumbnail/:size` | yes⁴       | Authorized WebP preview (`320` or `640`; ⁴published albums also allow anonymous access) |
 | GET    | `/i/public/<year>/<id>.<ext>` | no           | Public image (served by Nginx directly)              |
 | GET    | `/api/health`                 | no           | Liveness                                             |
+
+Image and album listings return `images`, `total`, and `next_cursor` (null at the
+end). The default page size is 48, with a maximum of 100. Pass `next_cursor` back
+as `cursor` to continue; ordering is stable even when uploads share a timestamp.
+Folder access is applied before pagination. Each image retains its original
+`url` and adds `thumbnails: [{ url, width, height }]`. An empty thumbnail array
+means the client should use the original until previews are available.
+
+## Thumbnails and existing images
+
+New uploads generate WebP previews bounded to 320×320 and 640×640 pixels, with
+orientation applied and transparency preserved. GIF and animated WebP previews
+use their first frame; opening the original preserves animation. Preview
+generation is bounded and a preview failure does not discard the original.
+
+Generate previews for existing uploads after deploying the server update:
+
+```bash
+cd server
+npm run backfill-thumbnails
+# Optional batches; resume after the last image ID printed by the command:
+npm run backfill-thumbnails -- --limit 100 --after LAST_IMAGE_ID
+```
+
+The command skips healthy previews and repairs missing ones, so rerunning it is
+safe. Originals remain untouched. Preview files follow the original's storage
+root, visibility changes, and deletion. Private previews use the same access
+checks and Nginx internal delivery as private originals, including album
+unpublishing. No additional public storage location is needed.
 
 ## Local development
 
@@ -152,4 +185,6 @@ deploy/   nginx.conf, systemd unit, DEPLOY.md
   the app's authorization.
 
 Run the access-control self-check with `cd server && node scripts/check-access.js`.
-```
+Run all server regression checks with `cd server && npm test`. These use temporary
+databases and storage, covering thumbnail generation/delivery, access revocation,
+preview lifecycle, backfill repair, and cursor pagination. CI runs them as well.

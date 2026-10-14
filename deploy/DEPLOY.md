@@ -261,6 +261,38 @@ curl https://img.jxue.ca/i/private/<id> -i                          # 401
 
 ## Updating later
 
+### Gallery thumbnails
+
+Install server dependencies with optional dependencies enabled (`npm ci
+--omit=dev` does this by default). Sharp supplies prebuilt Linux ARM64 binaries;
+Node must be at least 20.9.0. Deploy server and frontend together: image/album
+listings now return a page of 48 images by default, plus `total` and
+`next_cursor`, and the frontend uses these fields for **Load more**.
+
+New uploads generate 320/640-pixel WebP previews automatically. After the first
+deployment, backfill existing uploads as the service user:
+
+```bash
+cd /srv/app/server
+sudo -u imagehoster npm run backfill-thumbnails
+# For a bounded batch, then resume with the last reported image ID:
+sudo -u imagehoster npm run backfill-thumbnails -- --limit 100
+sudo -u imagehoster npm run backfill-thumbnails -- --limit 100 --after LAST_IMAGE_ID
+```
+
+The backfill is rerunnable and repairs missing previews. It does not alter
+original images, and the gallery falls back to originals until previews exist.
+Allow additional storage for two small previews per image. GIF/WebP animations
+use a static first-frame preview; original downloads retain their animation.
+
+The existing Nginx configuration handles both preview paths: public previews
+live under `/i/public/`, and protected previews use
+`/i/private/:id/thumbnail/320` or `/640`, followed by `X-Accel-Redirect` into the
+existing internal location. Keep these roots aligned with the app config.
+Protected responses require browser revalidation so the app can check access;
+do not override them with public caching. Published albums may contain private
+images, whose previews must stay in private storage so unpublishing closes access.
+
 API:
 ```bash
 rsync -av --exclude node_modules --exclude .env server/ ubuntu@YOUR_VM_IP:/tmp/server/

@@ -13,7 +13,7 @@ import multer from "multer";
 import convert from "heic-convert";
 import { requireAuth } from "../auth.js";
 import { config } from "../config.js";
-import { sniffImage, storeImage, publicUrlFor } from "../images.js";
+import { sniffImage, storeImage, getImage, publicUrlFor, ensureThumbnails, thumbnailsFor } from "../images.js";
 import { getOrCreateByName, getFolder, canAccessFolder } from "../folders.js";
 
 const router = Router();
@@ -63,7 +63,20 @@ export async function processFiles(files, { uploadedBy, visibility, folderId }) 
       ext: sniffed.ext,
       folderId,
     });
-    return { name: file.originalname, ok: true, id: img.id, visibility: img.visibility, url: publicUrlFor(img), folder_id: img.folder_id };
+    try {
+      await ensureThumbnails(img.id);
+    } catch (err) {
+      // Preserve the original even when the decoder rejects a preview (for
+      // example, a huge image exceeding the bounded pixel budget).
+      console.warn(`Thumbnail generation failed for ${img.id}: ${err.message}`);
+    }
+    // The image is already listed while previews are generated. Another request
+    // may move or delete it before this upload completes.
+    const current = getImage(img.id);
+    if (!current) {
+      return { name: file.originalname, ok: false, error: "image was deleted during upload" };
+    }
+    return { name: file.originalname, ok: true, id: current.id, visibility: current.visibility, url: publicUrlFor(current), folder_id: current.folder_id, thumbnails: thumbnailsFor(current) };
   }));
 }
 

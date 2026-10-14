@@ -6,7 +6,7 @@
 // not its subfolders. ponytail: no nesting until someone asks for it.
 import { Router } from "express";
 import { getFolderBySlug } from "../folders.js";
-import { listImages } from "../images.js";
+import { listImages, parsePagination } from "../images.js";
 import { upload, processFiles } from "./upload.js";
 
 const router = Router();
@@ -20,16 +20,27 @@ function album(req, res, next) {
 
 // GET /api/albums/:slug — album name, upload permission, and its images.
 router.get("/:slug", album, (req, res) => {
+  let pagination;
+  try {
+    pagination = parsePagination(req.query);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  const page = listImages({ folder: req.album.id, ...pagination });
+  res.setHeader("Cache-Control", "no-store");
   res.json({
     album: {
       name: req.album.name,
       can_upload: !!req.album.public_upload,
     },
-    images: listImages({ folder: req.album.id }).map((img) => ({
+    total: page.total,
+    next_cursor: page.next_cursor,
+    images: page.images.map((img) => ({
       id: img.id,
       url: img.url,
       original_name: img.original_name,
       created_at: img.created_at,
+      thumbnails: img.thumbnails,
     })),
   });
 });

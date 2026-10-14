@@ -24,6 +24,9 @@ export const config = {
   maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES || 26214400),
   // Max files accepted in a single bulk upload request.
   maxUploadFiles: Number(process.env.MAX_UPLOAD_FILES || 50),
+  // Bound both simultaneous decodes and image dimensions on the small VM.
+  thumbnailConcurrency: Math.max(1, Math.min(8, Math.floor(Number(process.env.THUMBNAIL_CONCURRENCY) || 2))),
+  thumbnailMaxPixels: Math.max(1, Math.min(100000000, Math.floor(Number(process.env.THUMBNAIL_MAX_PIXELS) || 60000000))),
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS || 30),
 
   internalPrefix: process.env.INTERNAL_PREFIX || "/internal",
