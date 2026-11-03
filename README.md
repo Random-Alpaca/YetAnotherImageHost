@@ -70,7 +70,7 @@ when the app authorizes a request and returns an `X-Accel-Redirect` into the
 | DELETE | `/api/images/:id`             | owner/admin  | Delete an image                                      |
 | GET    | `/api/folders`                | yes          | List folders (with recursive image counts)           |
 | POST   | `/api/folders`                | yes          | Create a folder                                      |
-| PATCH  | `/api/folders/:id`            | owner/admin  | Sharing: `access`, `is_public`, `public_upload`, `shared_with` |
+| PATCH  | `/api/folders/:id`            | owner/admin  | Rename (`name`) and/or sharing: `access`, `is_public`, `public_upload`, `shared_with`. 409 if a sibling already has that name |
 | DELETE | `/api/folders/:id`            | owner/admin  | Delete a folder (reparents its contents up one level)|
 | GET    | `/api/albums/:slug`           | no           | A published album's name + paginated images (`limit`, `cursor`) |
 | POST   | `/api/albums/:slug/upload`    | no³          | Visitor upload (³only if `public_upload` is on)      |
@@ -158,7 +158,7 @@ SSH on a green push to `main`. Required secrets and the one server prerequisite
 
 ```
 server/   Express API (login, accounts, upload, private authorization) + create-user CLI
-web/      React + Vite + Tailwind SPA (login / portal / account / admin)
+web/      React + Vite SPA, plain CSS in src/index.css (login / portal / account / admin)
 deploy/   nginx.conf, systemd unit, DEPLOY.md
 ```
 
@@ -188,3 +188,8 @@ Run the access-control self-check with `cd server && node scripts/check-access.j
 Run all server regression checks with `cd server && npm test`. These use temporary
 databases and storage, covering thumbnail generation/delivery, access revocation,
 preview lifecycle, backfill repair, and cursor pagination. CI runs them as well.
+
+## Credits
+
+- Interface design based on the [Unslop](https://github.com/heydamir/unslop) guidance by Damir Sokolovsky ([@heydamir](https://github.com/heydamir)), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Credited in the app footer.
+- [Geist](https://vercel.com/font) by Vercel, SIL Open Font License 1.1 (`web/public/fonts/OFL.txt`).

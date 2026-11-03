@@ -14,7 +14,7 @@ process.env.STORAGE_PUBLIC = path.join(tmp, "public");
 process.env.STORAGE_PRIVATE = path.join(tmp, "private");
 process.env.COOKIE_SECRET = "check";
 
-const { createFolder, updateFolderSharing, setFolderShares, canAccessFolder, getFolder } =
+const { createFolder, renameFolder, updateFolderSharing, setFolderShares, canAccessFolder, getFolder } =
   await import("../src/folders.js");
 const { canViewImage } = await import("../src/routes/images.js");
 const { db } = await import("../src/db.js");
@@ -80,3 +80,14 @@ assert.equal(canViewImage(null, { id: "i2", folder_id: null }), false);
 
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log("access control checks passed");
+
+// Sibling folders cannot share a name (case-insensitive); other parents can reuse it.
+{
+  const a = createFolder({ name: "Dup", ownerId: owner.id });
+  const b = createFolder({ name: "Other", ownerId: owner.id });
+  assert.throws(() => createFolder({ name: "dup", ownerId: friend.id }), { code: "DUPLICATE_NAME" });
+  assert.throws(() => renameFolder(b.id, " DUP "), { code: "DUPLICATE_NAME" });
+  assert.equal(renameFolder(a.id, "DUP").name, "DUP"); // may change its own case
+  assert.equal(createFolder({ name: "Dup", ownerId: owner.id, parentId: b.id }).name, "Dup");
+  console.log("ok: folder names unique among siblings");
+}

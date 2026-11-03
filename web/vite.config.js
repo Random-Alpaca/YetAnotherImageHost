@@ -1,11 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
 
 // In dev, proxy API + image requests to the Express app so cookies and the
 // X-Accel path behave like production (minus the Nginx hand-off).
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   server: {
     proxy: {
       "/api": "http://127.0.0.1:3000",

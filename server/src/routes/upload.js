@@ -90,8 +90,11 @@ router.post("/upload", requireAuth, upload.array("file", config.maxUploadFiles),
     // Resolve folder_id for the batch.
     let folderId = req.body.folder_id || null;
     if (!folderId && req.body.folder_name) {
-      const folder = getOrCreateByName(req.body.folder_name, req.cred.id, req.body.parent_id || null);
-      folderId = folder.id;
+      try {
+        folderId = getOrCreateByName(req.body.folder_name, req.cred.id, req.body.parent_id || null).id;
+      } catch (err) {
+        return res.status(err.code === "DUPLICATE_NAME" ? 409 : 400).json({ error: err.message });
+      }
     } else if (folderId) {
       const folder = getFolder(folderId);
       if (!folder) return res.status(400).json({ error: "folder_id not found" });

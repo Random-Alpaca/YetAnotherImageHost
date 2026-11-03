@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useAuth } from "../App.jsx";
+import { Bare } from "../Chrome.jsx";
 
 export default function Login() {
   const auth = useAuth();
@@ -30,39 +31,26 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen grid place-items-center px-4">
-      <form onSubmit={submit} className="w-full max-w-sm">
-        <h1 className="text-xl font-semibold mb-1">Image Hoster</h1>
-        <p className="text-sm text-zinc-500 mb-6">Sign in with your username and password.</p>
-        <input
-          type="text"
-          autoFocus
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="Username"
-          autoComplete="username"
-          className="w-full rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 outline-none focus:border-zinc-600 mb-3"
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          autoComplete="current-password"
-          className="w-full rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 outline-none focus:border-zinc-600"
-        />
-        {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
-        <button
-          type="submit"
-          disabled={busy || !username || !password}
-          className="mt-4 w-full rounded-lg bg-zinc-100 text-zinc-900 font-medium py-2 disabled:opacity-50"
-        >
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
-        <Link to="/signup" className="mt-4 block text-center text-sm text-zinc-500 hover:text-zinc-300">
-          Need an account? Request one
-        </Link>
+    <Bare>
+      <form onSubmit={submit} className="login-panel">
+        <h1>Sign in</h1>
+        <p>Sign in with your username and password.</p>
+        <label className="field">
+          <span>Username</span>
+          <input type="text" autoFocus value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+        </label>
+        <label className="field">
+          <span>Password</span>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+        </label>
+        {error && <div className="form-error">{error}</div>}
+        <div className="login-options">
+          <button type="submit" className="btn btn-primary" disabled={busy || !username || !password}>
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+        </div>
+        <Link to="/signup" className="text-link">Need an account? Request one</Link>
       </form>
-    </div>
+    </Bare>
   );
 }

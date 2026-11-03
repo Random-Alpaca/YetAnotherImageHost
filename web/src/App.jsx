@@ -1,8 +1,10 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { Routes, Route, Navigate, Link, useLocation } from "react-router-dom";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { Routes, Route, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api.js";
+import Icon from "./Icon.jsx";
+import { Footer } from "./Chrome.jsx";
 import Login from "./pages/Login.jsx";
-import Portal from "./pages/Portal.jsx";
+import Portal, { Shared } from "./pages/Portal.jsx";
 import Admin from "./pages/Admin.jsx";
 import Account from "./pages/Account.jsx";
 import Signup from "./pages/Signup.jsx";
@@ -32,8 +34,6 @@ function useProvideAuth() {
       setRole(newRole);
       setUsername(newUsername);
     },
-    // Kept for backward-compat (Portal may only need setRole)
-    setRole,
     async logout() {
       await api.logout().catch(() => {});
       setRole(null);
@@ -41,6 +41,10 @@ function useProvideAuth() {
     },
   };
 }
+
+// --- Shell state shared by the sidebar and the pages ------------------------
+const ShellCtx = createContext(null);
+export const useShell = () => useContext(ShellCtx);
 
 // --- Route guards ---------------------------------------------------------
 function Protected({ children, adminOnly }) {
@@ -53,34 +57,153 @@ function Protected({ children, adminOnly }) {
 }
 
 function Splash() {
-  return <div className="min-h-screen grid place-items-center text-zinc-500">Loading…</div>;
+  return <div className="splash">Loading…</div>;
 }
 
-function Nav() {
+// Folders depth-first (children under their parent) with a nesting level.
+function folderTree(folders) {
+  const byParent = {};
+  for (const f of folders) (byParent[f.parent_id || ""] ||= []).push(f);
+  const out = [];
+  const walk = (parent, depth) => {
+    for (const f of byParent[parent] || []) { out.push({ ...f, depth }); walk(f.id, depth + 1); }
+  };
+  walk("", 0);
+  // Folders whose parent is hidden from this user still deserve a sidebar entry.
+  const seen = new Set(out.map((f) => f.id));
+  for (const f of folders) if (!seen.has(f.id)) out.push({ ...f, depth: 0 });
+  return out;
+}
+
+const TITLES = { "/": "Library", "/photos": "All photos", "/shared": "Shared albums", "/account": "Account", "/admin": "Administration" };
+
+// Light/dark theme: <html data-theme>, persisted in localStorage (index.html sets it pre-paint).
+function useTheme() {
+  const [theme, setTheme] = useState(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  return [theme, () => {
+    const next = theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("theme", next); } catch { /* private mode */ }
+    setTheme(next);
+  }];
+}
+
+function Shell() {
   const auth = useAuth();
-  if (!auth.isAuthed) return null;
+  // Remount on user change so cached private data never crosses accounts.
+  return <ShellContent key={`${auth.username}:${auth.role}`} />;
+}
+
+function ShellContent() {
+  const auth = useAuth();
+  const nav = useNavigate();
+  const loc = useLocation();
+  const [folders, setFolders] = useState([]);
+  const [foldersLoading, setFoldersLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+  const request = useRef(null);
+  const mounted = useRef(true);
+  const toastTimer = useRef(null);
+  const searchRef = useRef(null);
+  const [theme, toggleTheme] = useTheme();
+
+  async function refreshFolders() {
+    if (!mounted.current) return;
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    try {
+      const { folders } = await api.listFolders({ signal: controller.signal });
+      if (mounted.current && !controller.signal.aborted) setFolders(folders || []);
+    } catch (err) {
+      if (mounted.current && !controller.signal.aborted) {
+        if (err.status === 401) { setFolders([]); auth.setAuth(null, null); }
+        else toast(err.message);
+      }
+    } finally {
+      if (mounted.current && !controller.signal.aborted) setFoldersLoading(false);
+    }
+  }
+
+  function toast(msg) {
+    clearTimeout(toastTimer.current);
+    setToastMsg(msg);
+    toastTimer.current = setTimeout(() => setToastMsg(""), 4200);
+  }
+
+  useEffect(() => {
+    mounted.current = true;
+    refreshFolders();
+    return () => { mounted.current = false; request.current?.abort(); clearTimeout(toastTimer.current); };
+  }, []);
+
+  // Leaving a page clears the search and closes the mobile menu.
+  useEffect(() => { setMenuOpen(false); setQuery(""); window.scrollTo({ top: 0 }); }, [loc.pathname]);
+
+  // "/" focuses search, like the design; Esc closes the mobile menu.
+  useEffect(() => {
+    const key = (e) => {
+      if (e.key === "Escape") setMenuOpen(false);
+      const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName);
+      if (e.key === "/" && !typing && !document.querySelector("dialog[open]")) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, []);
+
+  const current = loc.pathname.startsWith("/f/") ? folders.find((f) => loc.pathname === `/f/${f.id}`)?.name : null;
+  const searchable = !["/account", "/admin"].includes(loc.pathname);
+
   return (
-    <header className="border-b border-zinc-800 bg-zinc-950/60 backdrop-blur sticky top-0 z-10">
-      <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-6">
-        <Link to="/" className="font-semibold tracking-tight">Image Hoster</Link>
-        <nav className="flex items-center gap-4 text-sm text-zinc-400">
-          <Link to="/" className="hover:text-zinc-100">Portal</Link>
-          <Link to="/account" className="hover:text-zinc-100">Account</Link>
-          {auth.isAdmin && <Link to="/admin" className="hover:text-zinc-100">Admin</Link>}
+    <ShellCtx.Provider value={{ folders, foldersLoading, setFolders, refreshFolders, query, toast }}>
+      {menuOpen && <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} />}
+      <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
+        <nav>
+          <NavLink to="/" end><Icon name="library" />Library</NavLink>
+          <NavLink to="/photos"><Icon name="image" />All photos</NavLink>
+          <NavLink to="/shared"><Icon name="link" />Shared albums</NavLink>
         </nav>
-        <div className="ml-auto flex items-center gap-3 text-sm text-zinc-400">
-          {auth.username && (
-            <span className="text-zinc-500">{auth.username}</span>
-          )}
-          <button
-            onClick={auth.logout}
-            className="hover:text-zinc-100"
-          >
-            Log out
-          </button>
+        <div className="nav-label collections-label">Folders</div>
+        <div className="folder-nav">
+          {folderTree(folders).map((f) => (
+            <NavLink key={f.id} to={`/f/${f.id}`} style={{ paddingLeft: 12 + f.depth * 14 }}>
+              <Icon name="folder" /><span>{f.name}</span>
+            </NavLink>
+          ))}
         </div>
+        <div className="sidebar-bottom">
+          <button className="theme-toggle" onClick={toggleTheme}>
+            <Icon name={theme === "dark" ? "sun" : "moon"} />{theme === "dark" ? "Light mode" : "Dark mode"}
+          </button>
+          <NavLink to="/account" className="footer-nav"><Icon name="settings" />Account</NavLink>
+          {auth.isAdmin && <NavLink to="/admin" className="footer-nav"><Icon name="users" />Administration</NavLink>}
+          <button className="footer-nav" onClick={auth.logout}><Icon name="left" />Sign out</button>
+        </div>
+      </aside>
+      <div className="shell">
+        <header className="topbar">
+          <button className="icon-button mobile-menu" onClick={() => setMenuOpen((v) => !v)} aria-label="Toggle navigation"><Icon name="menu" /></button>
+          <div className="breadcrumb"><strong>{current || TITLES[loc.pathname] || "Library"}</strong></div>
+          {searchable && (
+            <label className="search">
+              <Icon name="search" />
+              <input ref={searchRef} aria-label="Search photos and folders" placeholder="Search" value={query}
+                     onChange={(e) => setQuery(e.target.value)} />
+              <kbd>/</kbd>
+            </label>
+          )}
+          <button className="profile" onClick={() => nav("/account")} aria-label="Account">{auth.username || "Account"}</button>
+        </header>
+        <main><Outlet /></main>
+        <Footer />
       </div>
-    </header>
+      {toastMsg && <div className="toast" role="status">{toastMsg}</div>}
+    </ShellCtx.Provider>
   );
 }
 
@@ -88,15 +211,19 @@ export default function App() {
   const auth = useProvideAuth();
   return (
     <AuthCtx.Provider value={auth}>
-      <Nav />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         {/* Public: the only route a logged-out visitor can reach besides login. */}
         <Route path="/a/:slug" element={<Album />} />
-        <Route path="/" element={<Protected><Portal /></Protected>} />
-        <Route path="/account" element={<Protected><Account /></Protected>} />
-        <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
+        <Route element={<Protected><Shell /></Protected>}>
+          <Route path="/" element={<Portal />} />
+          <Route path="/photos" element={<Portal />} />
+          <Route path="/f/:folderId" element={<Portal />} />
+          <Route path="/shared" element={<Shared />} />
+          <Route path="/account" element={<Account />} />
+          <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
+        </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AuthCtx.Provider>

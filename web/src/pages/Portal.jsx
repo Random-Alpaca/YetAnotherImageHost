@@ -1,298 +1,142 @@
 import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api.js";
+import { useAuth, useShell } from "../App.jsx";
+import Icon from "../Icon.jsx";
+import { Modal } from "../Chrome.jsx";
 import UploadProgress from "../UploadProgress.jsx";
-import { useAuth } from "../App.jsx";
-import GalleryThumbnail from "../GalleryThumbnail.jsx";
+import ShareDialog from "../ShareDialog.jsx";
+import { LoadMore, PhotoCard, Viewer, absUrl, copyText } from "../Photos.jsx";
 import usePagedGallery from "../usePagedGallery.js";
 
-const fetchImages = (folder, options) => api.listImages(folder, options);
+// "none" = unfiled (library root), "all" = every image the user may see.
+const fetchImages = (key, options) => api.listImages(key === "all" ? undefined : key, options);
 
-// Sharing panel for one folder: who can see it inside the portal, and whether
-// it's also published as a link-only album for people with no account.
-function FolderSharing({ folder, onChange, onError }) {
-  const [people, setPeople] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const albumUrl = folder.public_slug ? `${window.location.origin}/a/${folder.public_slug}` : null;
+const ACCESS_LABEL = { everyone: "everyone signed in", admins: "admins only", shared: "specific people" };
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-  useEffect(() => {
-    api.userNames().then((d) => setPeople(d.users || [])).catch(() => {});
-  }, []);
-
-  async function patch(body) {
-    setBusy(true);
-    try {
-      onChange(await api.updateFolder(folder.id, body));
-    } catch (err) {
-      onError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const shared = folder.shared_with || [];
-
+function FolderCard({ folder, onOpen, onDelete }) {
   return (
-    <div className={`mb-6 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 space-y-4 ${busy ? "opacity-60" : ""}`}>
-      <div className="flex items-center gap-3">
-        <label className="text-sm text-zinc-300">Who can see this folder</label>
-        <select
-          value={folder.access || "everyone"}
-          onChange={(e) => patch({ access: e.target.value })}
-          className="rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-sm"
-        >
-          <option value="everyone">Everyone signed in</option>
-          <option value="admins">Admins only</option>
-          <option value="shared">Only specific people</option>
-        </select>
-      </div>
-
-      {folder.access === "shared" && (
-        <div className="flex flex-wrap gap-2">
-          {people.length === 0 && <span className="text-xs text-zinc-500">No other accounts yet.</span>}
-          {people.map((p) => {
-            const on = shared.includes(p.id);
-            return (
-              <button
-                key={p.id}
-                onClick={() =>
-                  patch({ shared_with: on ? shared.filter((x) => x !== p.id) : [...shared, p.id] })
-                }
-                className={`rounded-full px-3 py-1 text-xs transition border ${
-                  on
-                    ? "bg-zinc-200 text-zinc-900 border-zinc-200"
-                    : "border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500"
-                }`}
-              >
-                {p.username}
-              </button>
-            );
-          })}
-          <span className="w-full text-xs text-zinc-500">
-            The owner and admins always have access.
-          </span>
+    <article className="folder-card">
+      <button className="folder-cover" onClick={onOpen} aria-label={`Open ${folder.name}`}>
+        <span className="skeleton-cover"><Icon name="folder" /></span>
+      </button>
+      <div className="folder-info">
+        <div>
+          <h3>{folder.name}</h3>
+          <p>{plural(folder.count, "photo")}<span>·</span>{folder.is_public ? "Public album" : ACCESS_LABEL[folder.access] || "Not shared"}</p>
         </div>
-      )}
-
-      <div className="border-t border-zinc-800 pt-3 space-y-2">
-        <label className="flex items-center gap-2 text-sm text-zinc-300">
-          <input
-            type="checkbox"
-            checked={!!folder.public_slug}
-            onChange={(e) => patch({ is_public: e.target.checked })}
-          />
-          Share as a public album (anyone with the link, no account)
-        </label>
-        {albumUrl && (
-          <>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={async () => {
-                  await navigator.clipboard.writeText(albumUrl).catch(() => {});
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                }}
-                className="shrink-0 rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300 hover:bg-zinc-700"
-              >
-                {copied ? "Copied" : "Copy link"}
-              </button>
-              <span className="truncate font-mono text-xs text-zinc-500">{albumUrl}</span>
-            </div>
-            <label className="flex items-center gap-2 text-sm text-zinc-300">
-              <input
-                type="checkbox"
-                checked={!!folder.public_upload}
-                onChange={(e) => patch({ public_upload: e.target.checked })}
-              />
-              Let visitors add photos too
-            </label>
-            <p className="text-xs text-zinc-500">
-              Turning off public sharing issues a new link next time — the old one
-              stops working for good.
-            </p>
-          </>
+        {folder.can_modify && (
+          <button className="icon-button" onClick={onDelete} aria-label={`Delete ${folder.name}`}><Icon name="trash" /></button>
         )}
       </div>
-    </div>
+    </article>
+  );
+}
+
+function Empty({ title, children }) {
+  return <div className="empty"><Icon name="image" /><h2>{title}</h2><p>{children}</p></div>;
+}
+
+// Folders published as public albums.
+export function Shared() {
+  const { folders, foldersLoading, query } = useShell();
+  const nav = useNavigate();
+  const q = query.toLowerCase();
+  const albums = folders.filter((f) => f.is_public && f.name.toLowerCase().includes(q));
+  return (
+    <>
+      <div className="page-heading"><div><h1>Shared albums</h1><p>Albums available to anyone with a link</p></div></div>
+      {foldersLoading ? <p className="dim">Loading…</p> : albums.length === 0 ? (
+        <Empty title="No shared albums">Open a folder and choose Share to publish it as an album.</Empty>
+      ) : (
+        <div className="folders-grid">
+          {albums.map((f) => <FolderCard key={f.id} folder={f} onOpen={() => nav(`/f/${f.id}`)} />)}
+        </div>
+      )}
+    </>
   );
 }
 
 export default function Portal() {
-  const auth = useAuth();
-  return <PortalContent key={`${auth.username}:${auth.role}`} />;
+  const { folderId } = useParams();
+  const { pathname } = useLocation();
+  return <Library galleryKey={folderId ?? (pathname === "/photos" ? "all" : "none")} />;
 }
 
-function PortalContent() {
+function Library({ galleryKey }) {
   const { setAuth } = useAuth();
-  const [error, setError] = useState("");
-
-  // --- Folder state ---
-  const [folders, setFolders] = useState([]);
-  const [foldersLoading, setFoldersLoading] = useState(true);
-  const foldersRequest = useRef(null);
-  const mounted = useRef(true);
-  const [currentFolder, setCurrentFolder] = useState(null); // null = root
-  const gallery = usePagedGallery(currentFolder ?? "none", fetchImages);
+  const nav = useNavigate();
+  const { folders, foldersLoading, setFolders, refreshFolders, query, toast } = useShell();
+  const gallery = usePagedGallery(galleryKey, fetchImages);
   const { images, loading, total } = gallery;
-  const [newFolderName, setNewFolderName] = useState("");
-  const [showNewFolder, setShowNewFolder] = useState(false);
-  const [creatingFolder, setCreatingFolder] = useState(false);
-  const [showShare, setShowShare] = useState(false);
 
-  // --- Upload state ---
+  const mode = galleryKey === "none" ? "home" : galleryKey === "all" ? "photos" : "folder";
+  const folder = mode === "folder" ? folders.find((f) => f.id === galleryKey) || null : null;
+  const currentFolderId = mode === "folder" ? galleryKey : null; // upload / new-folder target
+
+  const [error, setError] = useState("");
+  const [view, setView] = useState("grid");
+  const [dialog, setDialog] = useState(null); // "new-folder" | "share" | "move"
+  const [viewerIndex, setViewerIndex] = useState(null);
+
+  // Upload
   const [visibility, setVisibility] = useState("private");
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [results, setResults] = useState([]);
-  const [copied, setCopied] = useState("");
   const fileRef = useRef(null);
 
-  // --- Per-image visibility toggle state ---
-  // { [imgId]: { loading, newUrl } }
-  const [visibilityOps, setVisibilityOps] = useState({});
-
-  // --- Multi-select state ---
+  // Selection
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(new Set());
-  const [bulkFolderId, setBulkFolderId] = useState("");
-  const [showBulkMove, setShowBulkMove] = useState(false);
-  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
-  // --- Helpers ---
-  const absUrl = (u) => (u && u.startsWith("http") ? u : window.location.origin + u);
-
-  async function refreshFolders() {
-    if (!mounted.current) return;
-    foldersRequest.current?.abort();
-    const controller = new AbortController();
-    foldersRequest.current = controller;
-    try {
-      const { folders } = await api.listFolders({ signal: controller.signal });
-      if (mounted.current && !controller.signal.aborted) setFolders(folders || []);
-    } catch (err) {
-      if (mounted.current && !controller.signal.aborted) {
-        if (err.status === 401) {
-          setFolders([]);
-          setAuth(null, null);
-        }
-        setError(err.message);
-      }
-    } finally {
-      if (mounted.current && !controller.signal.aborted) setFoldersLoading(false);
-    }
-  }
-
+  // Per-page UI resets when the route changes (the gallery cache survives).
   useEffect(() => {
-    mounted.current = true;
-    refreshFolders();
-    return () => { mounted.current = false; foldersRequest.current?.abort(); };
-  }, []);
+    setSelected(new Set());
+    setSelectMode(false);
+    setDialog(null);
+    setViewerIndex(null);
+    setResults([]);
+    setError("");
+  }, [galleryKey]);
 
+  // Keep only selectable images that are still on screen.
   useEffect(() => {
-    const available = new Set(images.filter((image) => image.can_modify).map((image) => image.id));
-    setSelected((previous) => new Set([...previous].filter((id) => available.has(id))));
+    const available = new Set(images.filter((i) => i.can_modify).map((i) => i.id));
+    setSelected((prev) => new Set([...prev].filter((id) => available.has(id))));
   }, [images]);
 
   useEffect(() => {
-    if (gallery.errorStatus === 401) {
-      setFolders([]);
-      setAuth(null, null);
-    }
-  }, [gallery.errorStatus, setAuth]);
+    if (gallery.errorStatus === 401) { setFolders([]); setAuth(null, null); }
+  }, [gallery.errorStatus, setAuth, setFolders]);
 
-  // Navigation displays a cached listing immediately, then revalidates it.
-  function selectFolder(folder) {
-    if (folder === currentFolder) {
-      gallery.refresh();
-      refreshFolders();
-    }
-    setCurrentFolder(folder);
-    setSelected(new Set());
-    setSelectMode(false);
-    setShowBulkMove(false);
-    setShowNewFolder(false);
-    setShowShare(false);
-    setNewFolderName("");
-    setError("");
-    setVisibilityOps({});
-  }
+  const q = query.toLowerCase();
+  const childFolders = mode === "photos" ? [] : folders.filter(
+    (f) => (f.parent_id || null) === currentFolderId && f.name.toLowerCase().includes(q));
+  const shown = q ? images.filter((i) => (i.original_name || "").toLowerCase().includes(q)) : images;
 
-  // Folder currently open, from the folder list (carries sharing settings).
-  const openFolder = folders.find((f) => f.id === currentFolder) || null;
-
-  // --- Derived folder helpers ---
-  const childFolders = folders.filter((f) => (f.parent_id || null) === currentFolder);
-
-  // Breadcrumb trail from root → currentFolder.
-  function breadcrumbTrail() {
-    const trail = [];
-    let id = currentFolder;
-    const byId = Object.fromEntries(folders.map((f) => [f.id, f]));
-    while (id) {
-      const f = byId[id];
-      if (!f) break;
-      trail.unshift(f);
-      id = f.parent_id || null;
-    }
-    return trail;
-  }
-  const trail = breadcrumbTrail();
-
-  // Full "A / B / C" path label for a folder id (used in the bulk-move dropdown).
   function folderPath(id) {
     const byId = Object.fromEntries(folders.map((f) => [f.id, f]));
     const parts = [];
-    let cur = id;
-    while (cur) {
-      const f = byId[cur];
-      if (!f) break;
-      parts.unshift(f.name);
-      cur = f.parent_id || null;
-    }
+    for (let cur = id; cur && byId[cur]; cur = byId[cur].parent_id) parts.unshift(byId[cur].name);
     return parts.join(" / ");
   }
 
-  // --- Copy to clipboard ---
-  async function copy(url) {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(url);
-      setTimeout(() => setCopied(""), 1500);
-    } catch {
-      /* clipboard blocked */
-    }
-  }
+  const refreshAll = () => Promise.all([refreshFolders(), gallery.refresh({ invalidate: true })]);
 
-  // --- Create a folder under the current folder (standalone, no upload) ---
-  async function onCreateFolder() {
-    const name = newFolderName.trim();
-    if (!name) return;
-    setCreatingFolder(true);
+  async function onDeleteFolder(f) {
+    if (!confirm(`Delete folder "${f.name}"? Its contents move up one level.`)) return;
     try {
-      await api.createFolder(name, currentFolder);
-      setNewFolderName("");
-      setShowNewFolder(false);
-      await refreshFolders();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setCreatingFolder(false);
-    }
-  }
-
-  // --- Delete a folder (reparents contents up one level, server-side) ---
-  async function onDeleteFolder(folder) {
-    if (!confirm(`Delete folder "${folder.name}"? Its contents move up one level.`)) return;
-    try {
-      await api.deleteFolder(folder.id);
-      await Promise.all([refreshFolders(), gallery.refresh({ invalidate: true })]);
+      await api.deleteFolder(f.id);
+      await refreshAll();
     } catch (err) {
       setError(err.message);
     }
   }
 
-  // --- Upload (always targets the current folder) ---
   async function uploadFiles(fileList) {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
@@ -300,14 +144,13 @@ function PortalContent() {
     setProgress({ done: 0, total: files.length, loaded: 0, bytes: 1 });
     setError("");
     try {
-      const folderOpts = {
-        ...(currentFolder ? { folderId: currentFolder } : {}),
+      const { results } = await api.upload(files, visibility, {
+        ...(currentFolderId ? { folderId: currentFolderId } : {}),
         onProgress: setProgress,
-      };
-      const { results } = await api.upload(files, visibility, folderOpts);
+      });
       setResults(results);
       if (fileRef.current) fileRef.current.value = "";
-      await Promise.all([refreshFolders(), gallery.refresh({ invalidate: true })]);
+      await refreshAll();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -316,520 +159,327 @@ function PortalContent() {
     }
   }
 
-  function onDrop(e) {
-    e.preventDefault();
-    setDragActive(false);
-    if (!uploading) uploadFiles(e.dataTransfer.files);
+  async function onCopy(url) {
+    toast((await copyText(url)) ? "Link copied" : "Clipboard is unavailable");
   }
 
-  // --- Single delete ---
+  // --- Single-image actions (viewer) ---
+  async function onToggleVisibility(img) {
+    try {
+      const updated = await api.setVisibility(img.id, img.visibility === "public" ? "private" : "public");
+      gallery.update((imgs) => imgs.map((i) => (i.id === img.id ? { ...i, ...updated, thumbnails: updated.thumbnails || [] } : i)));
+      toast(`File is now ${updated.visibility}. Its direct link changed.`);
+      await gallery.refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function onDelete(id) {
     if (!confirm("Delete this image permanently?")) return;
     try {
       await api.deleteImage(id);
-      gallery.update((imgs) => imgs.filter((i) => i.id !== id));
+      setViewerIndex(null);
+      gallery.update((imgs) => imgs.filter((i) => i.id !== id), -1);
       await Promise.all([refreshFolders(), gallery.refresh()]);
     } catch (err) {
       setError(err.message);
     }
   }
 
-  // --- Per-image visibility toggle ---
-  async function onToggleVisibility(img) {
-    const newVis = img.visibility === "public" ? "private" : "public";
-    setVisibilityOps((prev) => ({ ...prev, [img.id]: { loading: true, newUrl: null } }));
+  // --- Selection / bulk ---
+  const toggleSelect = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const clearSelection = () => { setSelected(new Set()); setSelectMode(false); };
+
+  async function bulk(action, folderId) {
+    setBulkBusy(true);
     try {
-      const updated = await api.setVisibility(img.id, newVis);
-      const { url } = updated;
-      // Update the image in state and store the new URL for display
-      gallery.update((imgs) =>
-        imgs.map((i) =>
-          i.id === img.id ? { ...i, ...updated, thumbnails: updated.thumbnails || [] } : i
-        )
-      );
-      setVisibilityOps((prev) => ({ ...prev, [img.id]: { loading: false, newUrl: absUrl(url) } }));
-      await gallery.refresh();
-    } catch (err) {
-      setError(err.message);
-      setVisibilityOps((prev) => ({ ...prev, [img.id]: { loading: false, newUrl: null } }));
-    }
-  }
-
-  // --- Multi-select ---
-  function toggleSelectMode() {
-    setSelectMode((v) => !v);
-    setSelected(new Set());
-    setShowBulkMove(false);
-  }
-
-  function toggleSelect(id) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function onBulkDelete() {
-    if (!confirm(`Delete ${selected.size} image${selected.size === 1 ? "" : "s"} permanently?`)) return;
-    setBulkLoading(true);
-    try {
-      await api.bulkImages("delete", Array.from(selected));
-      setSelected(new Set());
-      setSelectMode(false);
-      await Promise.all([gallery.refresh({ invalidate: true }), refreshFolders()]);
+      const { results } = await api.bulkImages(action, Array.from(selected), folderId);
+      const failed = results.filter((r) => !r.ok);
+      clearSelection();
+      setDialog(null);
+      if (failed.length) setError(`${plural(failed.length, "image")} could not be changed: ${failed[0].error}`);
+      await refreshAll();
     } catch (err) {
       setError(err.message);
     } finally {
-      setBulkLoading(false);
+      setBulkBusy(false);
     }
   }
 
-  async function onBulkMove() {
-    if (!bulkFolderId) return;
-    setBulkLoading(true);
-    try {
-      await api.bulkImages("move", Array.from(selected), bulkFolderId);
-      setSelected(new Set());
-      setShowBulkMove(false);
-      setBulkFolderId("");
-      setSelectMode(false);
-      await Promise.all([gallery.refresh({ invalidate: true }), refreshFolders()]);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBulkLoading(false);
-    }
+  function onBulkDelete() {
+    if (confirm(`Delete ${plural(selected.size, "image")} permanently?`)) bulk("delete");
   }
 
+  const title = mode === "home" ? "Library" : mode === "photos" ? "All photos" : folder?.name || "Folder";
+  const sub = mode === "photos" ? plural(total, "image") : mode === "folder" && folder ? plural(folder.count, "photo") : "";
   const okResults = results.filter((r) => r.ok);
   const failResults = results.filter((r) => !r.ok);
+  const missing = mode === "folder" && !foldersLoading && !folder;
+  const parent = folder?.parent_id ? folders.find((f) => f.id === folder.parent_id) : null;
+  const destination = mode === "folder" ? folderPath(galleryKey) : "Library";
+
+  if (missing) {
+    return <Empty title="Folder not found">It may have been deleted, or you don't have access. <Link to="/">Back to library</Link></Empty>;
+  }
 
   return (
-    <main className="max-w-5xl mx-auto px-4 py-8">
+    <div className={`${view === "list" ? "list-view" : ""} ${selectMode ? "selecting" : ""}`}>
+      {mode === "folder" && (
+        <Link className="back-link" to={parent ? `/f/${parent.id}` : "/"}><Icon name="left" />{parent ? parent.name : "Back to library"}</Link>
+      )}
 
-      {/* ── Breadcrumb + new-folder bar ── */}
-      <div className="flex flex-wrap items-center gap-2 mb-6">
-        <nav className="flex items-center gap-1 text-sm">
-          <button
-            onClick={() => selectFolder(null)}
-            className={`rounded px-2 py-1 transition ${
-              currentFolder === null ? "text-zinc-100 font-medium" : "text-zinc-400 hover:text-zinc-200"
-            }`}
-          >
-            Home
-          </button>
-          {trail.map((f, i) => {
-            const last = i === trail.length - 1;
-            return (
-              <span key={f.id} className="flex items-center gap-1">
-                <span className="text-zinc-600">/</span>
-                <button
-                  onClick={() => selectFolder(f.id)}
-                  disabled={last}
-                  className={`rounded px-2 py-1 transition ${
-                    last ? "text-zinc-100 font-medium" : "text-zinc-400 hover:text-zinc-200"
-                  }`}
-                >
-                  {f.name}
-                </button>
-              </span>
-            );
-          })}
-        </nav>
-
-        <div className="ml-auto flex items-center gap-2">
-          {openFolder?.can_modify && (
-            <button
-              onClick={() => setShowShare((v) => !v)}
-              className={`rounded-md border px-3 py-1.5 text-xs transition ${
-                openFolder.public_slug
-                  ? "border-emerald-800 bg-emerald-950/40 text-emerald-300 hover:border-emerald-600"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-zinc-100 hover:border-zinc-600"
-              }`}
-            >
-              {openFolder.public_slug ? "Shared publicly" : "Share"}
-            </button>
-          )}
-          {showNewFolder ? (
-            <>
-              <input
-                type="text"
-                placeholder="Folder name"
-                value={newFolderName}
-                autoFocus
-                onChange={(e) => setNewFolderName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && onCreateFolder()}
-                className="rounded-md bg-zinc-900 border border-zinc-800 px-2 py-1.5 text-sm w-40 focus:outline-none focus:border-zinc-600"
-              />
-              <button
-                onClick={onCreateFolder}
-                disabled={!newFolderName.trim() || creatingFolder}
-                className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600 disabled:opacity-50 transition"
-              >
-                {creatingFolder ? "…" : "Create"}
-              </button>
-              <button
-                onClick={() => { setShowNewFolder(false); setNewFolderName(""); }}
-                className="text-xs text-zinc-500 hover:text-zinc-300"
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <button
-              onClick={() => setShowNewFolder(true)}
-              className="rounded-md bg-zinc-900 border border-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:text-zinc-100 hover:border-zinc-600 transition"
-            >
-              + New folder
-            </button>
-          )}
+      <div className="page-heading">
+        <div><h1>{title}</h1>{sub && <p>{sub}</p>}</div>
+        <div className="actions">
+          {folder?.can_modify && <button className="btn" onClick={() => setDialog("rename")}>Rename</button>}
+          {folder?.can_modify && <button className="btn" onClick={() => setDialog("share")}><Icon name="link" />Share</button>}
+          <button className="btn" onClick={() => setDialog("new-folder")}><Icon name="plus" />{mode === "folder" ? "New subfolder" : "New folder"}</button>
+          <button className="btn btn-primary" onClick={() => fileRef.current?.click()} disabled={uploading}><Icon name="upload" />Upload images</button>
         </div>
       </div>
 
-      {/* ── Sharing panel for the open folder ── */}
-      {showShare && openFolder && (
-        <FolderSharing
-          folder={openFolder}
-          onError={setError}
+      {folder && (
+        <div className="folder-summary">
+          <Icon name={folder.is_public ? "globe" : "lock"} />
+          <span>Album: {folder.is_public ? "anyone with the link" : "not shared publicly"} &nbsp;·&nbsp; Portal: {ACCESS_LABEL[folder.access] || folder.access}</span>
+          {folder.can_modify && <button onClick={() => setDialog("share")}>Manage access</button>}
+        </div>
+      )}
+
+      <div className="toolbar">
+        <div className="tabs">
+          {mode === "folder" ? <button className="active">Photos <em>{total}</em></button> : (
+            <>
+              <Link to="/" className={`tab ${mode === "home" ? "active" : ""}`}>Library</Link>
+              <Link to="/photos" className={`tab ${mode === "photos" ? "active" : ""}`}>All photos <em>{mode === "photos" ? total : ""}</em></Link>
+            </>
+          )}
+          {images.length > 0 && (
+            <button onClick={() => { setSelectMode((v) => !v); setSelected(new Set()); }}>{selectMode ? "Cancel selection" : "Select photos"}</button>
+          )}
+        </div>
+        <div className="toolbar-end">
+          <div className="view-switch">
+            <button aria-label="Grid view" title="Grid view" className={view === "grid" ? "active" : ""} onClick={() => setView("grid")}><Icon name="library" /></button>
+            <button aria-label="List view" title="List view" className={view === "list" ? "active" : ""} onClick={() => setView("list")}><Icon name="list" /></button>
+          </div>
+        </div>
+      </div>
+
+      {error && <p role="alert" className="form-error">{error}</p>}
+      {gallery.error && (
+        <p role="alert" className="form-error">
+          {gallery.error} <button className="link-button" onClick={() => gallery.refresh()}>Retry loading photos</button>
+        </p>
+      )}
+      <UploadProgress progress={progress} />
+
+      {results.length > 0 && (
+        <section className="results">
+          <div className="section-line">
+            <h2>Uploaded {plural(okResults.length, "image")}</h2>
+            {okResults.length > 1 && <button onClick={() => onCopy(okResults.map((r) => absUrl(r.url)).join("\n"))}>Copy all links</button>}
+          </div>
+          {okResults.map((r) => (
+            <div key={r.id} className="file-row">
+              <button className="btn" onClick={() => onCopy(absUrl(r.url))}><Icon name="copy" />Copy</button>
+              <a href={r.url} target="_blank" rel="noreferrer">{absUrl(r.url)}</a>
+            </div>
+          ))}
+          {failResults.map((r, i) => <p key={i} className="form-error">{r.name}: {r.error}</p>)}
+        </section>
+      )}
+
+      {gallery.refreshing && <p role="status" className="dim">Updating photos…</p>}
+      {loading || foldersLoading ? <p className="dim">Loading…</p> : (
+        <>
+          {childFolders.length > 0 && (
+            <>
+              <div className="section-line"><h2>Folders</h2><span>{childFolders.length}</span></div>
+              <div className="folders-grid">
+                {childFolders.map((f) => (
+                  <FolderCard key={f.id} folder={f} onOpen={() => nav(`/f/${f.id}`)} onDelete={() => onDeleteFolder(f)} />
+                ))}
+              </div>
+            </>
+          )}
+          {shown.length > 0 && (
+            <>
+              <div className="section-line">
+                <h2>{q ? `Results for “${query}”` : "Photos"}</h2>
+                <span>{gallery.images.length < total && !q ? `${images.length} of ${total} loaded` : plural(shown.length, "photo")}</span>
+              </div>
+              <div aria-busy={gallery.refreshing || gallery.loadingMore} className="photo-grid">
+                {shown.map((img, i) => (
+                  <PhotoCard
+                    key={img.id}
+                    image={img}
+                    showVisibility
+                    selected={selected.has(img.id)}
+                    onSelect={img.can_modify ? () => { toggleSelect(img.id); setSelectMode(true); } : undefined}
+                    onOpen={() => (selectMode && img.can_modify ? toggleSelect(img.id) : setViewerIndex(i))}
+                  />
+                ))}
+              </div>
+              <LoadMore gallery={gallery} />
+            </>
+          )}
+          {childFolders.length === 0 && shown.length === 0 && !gallery.error && (
+            q ? <Empty title="No matches">Try a different name. Search covers loaded photos and these folders.</Empty>
+              : mode === "folder" ? <Empty title="This folder is empty">Upload images to get started.</Empty>
+              : <Empty title="No images yet">Upload some below, or create a folder.</Empty>
+          )}
+        </>
+      )}
+
+      {/* Upload: always targets the page you're on */}
+      <div
+        className={`upload-strip ${dragActive ? "dragover" : ""}`}
+        onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={(e) => { e.preventDefault(); setDragActive(false); if (!uploading) uploadFiles(e.dataTransfer.files); }}
+      >
+        <button className="strip-main" disabled={uploading} onClick={() => fileRef.current?.click()}>
+          <span><Icon name="upload" /></span>
+          <span>
+            <strong>{uploading ? "Uploading…" : "Upload images"}</strong>
+            <small>Drop files here or choose images · PNG, JPG, GIF, WebP, HEIC · into {destination}</small>
+          </span>
+        </button>
+        <select value={visibility} onChange={(e) => setVisibility(e.target.value)} aria-label="Direct-file visibility">
+          <option value="private">Private (portal only)</option>
+          <option value="public">Public (direct link)</option>
+        </select>
+        <input ref={fileRef} type="file" multiple hidden onChange={(e) => uploadFiles(e.target.files)}
+               accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif,.heic,.heif" />
+      </div>
+
+      {selected.size > 0 && (
+        <div className="selection-bar">
+          <button className="icon-button" onClick={clearSelection} aria-label="Clear selection"><Icon name="close" /></button>
+          <span>{selected.size} selected</span>
+          <span className="divider" />
+          <button data-hide-mobile onClick={() => setSelected(new Set(images.filter((i) => i.can_modify).map((i) => i.id)))}>Select loaded</button>
+          <button onClick={() => setDialog("move")} disabled={bulkBusy}><Icon name="move" />Move</button>
+          <button onClick={onBulkDelete} disabled={bulkBusy}><Icon name="trash" />Delete</button>
+        </div>
+      )}
+
+      {dialog === "new-folder" && (
+        <FolderNameDialog
+          title={folder ? "New subfolder" : "New folder"}
+          intro={`Organize images in a folder. Created in ${folder?.name || "your library"}; sharing starts off.`}
+          submitLabel="Create folder"
+          onClose={() => setDialog(null)}
+          onSubmit={async (name) => {
+            const created = await api.createFolder(name, currentFolderId);
+            await refreshFolders();
+            setDialog(null);
+            nav(`/f/${created.id}`);
+          }} />
+      )}
+      {dialog === "rename" && folder && (
+        <FolderNameDialog
+          title="Rename folder"
+          initial={folder.name}
+          submitLabel="Save name"
+          onClose={() => setDialog(null)}
+          onSubmit={async (name) => {
+            if (name !== folder.name) {
+              const updated = await api.updateFolder(folder.id, { name });
+              setFolders((fs) => fs.map((f) => (f.id === updated.id ? { ...f, name: updated.name } : f)));
+            }
+            setDialog(null);
+          }} />
+      )}
+      {dialog === "share" && folder && (
+        <ShareDialog folder={folder} onClose={() => setDialog(null)}
           onChange={(updated) => {
             setFolders((fs) => fs.map((f) => (f.id === updated.id ? { ...f, ...updated } : f)));
             gallery.refresh({ invalidate: true });
             refreshFolders();
-          }}
-        />
+          }} />
+      )}
+      {dialog === "move" && (
+        <MoveDialog count={selected.size} folders={folders} folderPath={folderPath} busy={bulkBusy}
+          onClose={() => setDialog(null)} onMove={(id) => bulk("move", id)} />
       )}
 
-      {/* ── Upload controls ── */}
-      <div className="flex flex-wrap items-center gap-3 mb-3">
-        {/* Visibility */}
-        <select
-          value={visibility}
-          onChange={(e) => setVisibility(e.target.value)}
-          className="rounded-md bg-zinc-900 border border-zinc-800 px-2 py-1.5 text-sm"
-        >
-          <option value="private">Private (portal only)</option>
-          <option value="public">Public (direct link)</option>
+      {viewerIndex !== null && shown[viewerIndex] && (
+        <Viewer
+          images={shown}
+          index={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+          onStep={(n) => setViewerIndex((i) => (i === null ? i : (i + n + shown.length) % shown.length))}
+          actions={(img) => (
+            <>
+              <button className="btn" onClick={() => onCopy(absUrl(img.url))}><Icon name="copy" />Copy link</button>
+              {img.can_modify && (
+                <>
+                  <button className="btn" onClick={() => onToggleVisibility(img)}>
+                    <Icon name={img.visibility === "public" ? "lock" : "globe"} />Make {img.visibility === "public" ? "private" : "public"}
+                  </button>
+                  <button className="btn btn-danger" onClick={() => onDelete(img.id)}><Icon name="trash" />Delete</button>
+                </>
+              )}
+            </>
+          )}
+        />
+      )}
+    </div>
+  );
+}
+
+// Name prompt shared by "new folder" and "rename"; server errors (e.g. a sibling
+// already has the name) show inline.
+function FolderNameDialog({ title, intro, initial = "", submitLabel, onClose, onSubmit }) {
+  const [name, setName] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit() {
+    if (!name.trim()) return setError("Give your folder a name.");
+    setBusy(true);
+    try {
+      await onSubmit(name.trim());
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal title={title} onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={submit} disabled={busy}>{submitLabel}</button></>}>
+      {intro && <p>{intro}</p>}
+      <label className="field">
+        <span>Folder name</span>
+        <input autoFocus value={name} maxLength={80} placeholder="e.g. A weekend away"
+               onFocus={(e) => e.target.select()}
+               onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+      </label>
+      {error && <div className="form-error">{error}</div>}
+    </Modal>
+  );
+}
+
+function MoveDialog({ count, folders, folderPath, busy, onClose, onMove }) {
+  const [dest, setDest] = useState("");
+  return (
+    <Modal title="Move selected photos" onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy} onClick={() => onMove(dest || null)}>Move photos</button></>}>
+      <p>Move {plural(count, "selected image")} to another folder.</p>
+      <label className="field">
+        <span>Destination folder</span>
+        <select value={dest} onChange={(e) => setDest(e.target.value)}>
+          <option value="">Library (no folder)</option>
+          {folders.map((f) => <option key={f.id} value={f.id}>{folderPath(f.id)}</option>)}
         </select>
-        <span className="text-xs text-zinc-500">
-          New uploads will be <span className="text-zinc-300">{visibility}</span>, into{" "}
-          <span className="text-zinc-300">
-            {currentFolder === null ? "Home" : folderPath(currentFolder)}
-          </span>.
-        </span>
-      </div>
-
-      {/* ── Drag-and-drop zone ── */}
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-        onDragLeave={(e) => { e.preventDefault(); setDragActive(false); }}
-        onDrop={onDrop}
-        onClick={() => !uploading && fileRef.current?.click()}
-        className={`mb-6 cursor-pointer rounded-xl border-2 border-dashed px-6 py-10 text-center transition
-          ${dragActive ? "border-zinc-300 bg-zinc-800/50" : "border-zinc-700 bg-zinc-900/40 hover:border-zinc-500"}
-          ${uploading ? "opacity-60 pointer-events-none" : ""}`}
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif,.heic,.heif"
-          onChange={(e) => uploadFiles(e.target.files)}
-          className="hidden"
-        />
-        <p className="text-sm text-zinc-300">
-          {uploading ? "Uploading…" : "Drag & drop images here, or click to choose"}
-        </p>
-        <p className="mt-1 text-xs text-zinc-500">PNG, JPEG, GIF, WebP, HEIC · multiple files supported</p>
-      </div>
-
-      <UploadProgress progress={progress} />
-
-      {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
-      {gallery.error && (
-        <p role="alert" className="text-sm text-red-400 mb-4">
-          {gallery.error}{" "}
-          <button onClick={() => gallery.refresh()} className="underline hover:text-red-300">Retry loading photos</button>
-        </p>
-      )}
-
-      {/* ── Upload results ── */}
-      {results.length > 0 && (
-        <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-medium text-zinc-200">
-              Uploaded {okResults.length} image{okResults.length === 1 ? "" : "s"}
-            </h2>
-            {okResults.length > 1 && (
-              <button
-                onClick={() => copy(okResults.map((r) => absUrl(r.url)).join("\n"))}
-                className="text-xs text-zinc-400 hover:text-zinc-200"
-              >
-                Copy all
-              </button>
-            )}
-          </div>
-          <ul className="space-y-1">
-            {okResults.map((r) => (
-              <li key={r.id} className="flex items-center gap-2 text-xs">
-                <button
-                  onClick={() => copy(absUrl(r.url))}
-                  title="Copy URL"
-                  className="shrink-0 rounded bg-zinc-800 px-2 py-0.5 text-zinc-300 hover:bg-zinc-700"
-                >
-                  {copied === absUrl(r.url) ? "Copied" : "Copy"}
-                </button>
-                <a href={r.url} target="_blank" rel="noreferrer"
-                   className="truncate font-mono text-zinc-400 hover:text-zinc-200">
-                  {absUrl(r.url)}
-                </a>
-              </li>
-            ))}
-          </ul>
-          {failResults.length > 0 && (
-            <ul className="mt-2 space-y-1 border-t border-zinc-800 pt-2">
-              {failResults.map((r, i) => (
-                <li key={i} className="text-xs text-red-400">
-                  {r.name}: {r.error}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {/* ── Gallery header: select-mode toggle ── */}
-      {images.length > 0 && (
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-xs text-zinc-500">
-            {total} image{total === 1 ? "" : "s"}
-            {images.length < total && ` · ${images.length} loaded`}
-            {currentFolder !== null && (
-              <span> in <span className="text-zinc-300">{folderPath(currentFolder)}</span></span>
-            )}
-          </p>
-          <div className="flex items-center gap-3">
-            {selectMode && (
-              <button
-                onClick={() => setSelected(new Set(images.filter((image) => image.can_modify).map((image) => image.id)))}
-                className="text-xs text-zinc-400 hover:text-zinc-200"
-              >
-                Select loaded
-              </button>
-            )}
-            <button
-              onClick={toggleSelectMode}
-              className={`text-xs px-3 py-1 rounded-md transition ${
-                selectMode
-                  ? "bg-zinc-700 text-zinc-200"
-                  : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
-              }`}
-            >
-              {selectMode ? "Cancel selection" : "Select"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Sticky selection toolbar ── */}
-      {selectMode && selected.size > 0 && (
-        <div className="sticky top-4 z-20 mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-900/95 px-4 py-2.5 shadow-lg backdrop-blur">
-          <span className="text-sm text-zinc-300 font-medium">
-            {selected.size} selected
-          </span>
-          <button
-            onClick={onBulkDelete}
-            disabled={bulkLoading}
-            className="rounded-md bg-red-900/60 px-3 py-1 text-xs text-red-300 hover:bg-red-900 disabled:opacity-50 transition"
-          >
-            Delete selected
-          </button>
-          {showBulkMove ? (
-            <div className="flex items-center gap-2">
-              <select
-                value={bulkFolderId}
-                onChange={(e) => setBulkFolderId(e.target.value)}
-                className="rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs"
-              >
-                <option value="">Pick a folder…</option>
-                {folders.map((f) => (
-                  <option key={f.id} value={f.id}>{folderPath(f.id)}</option>
-                ))}
-              </select>
-              <button
-                onClick={onBulkMove}
-                disabled={!bulkFolderId || bulkLoading}
-                className="rounded-md bg-zinc-700 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-600 disabled:opacity-50 transition"
-              >
-                Move
-              </button>
-              <button
-                onClick={() => { setShowBulkMove(false); setBulkFolderId(""); }}
-                className="text-xs text-zinc-500 hover:text-zinc-300"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            folders.length > 0 && (
-              <button
-                onClick={() => setShowBulkMove(true)}
-                disabled={bulkLoading}
-                className="rounded-md bg-zinc-800 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition"
-              >
-                Move to folder…
-              </button>
-            )
-          )}
-          <button
-            onClick={() => setSelected(new Set())}
-            className="ml-auto text-xs text-zinc-500 hover:text-zinc-300"
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
-      {/* ── Folder + image grid ── */}
-      {gallery.refreshing && <p role="status" className="text-xs text-zinc-500 mb-3">Updating photos…</p>}
-      {loading || foldersLoading ? (
-        <p className="text-zinc-500">Loading…</p>
-      ) : !gallery.hasData && gallery.error ? null
-      : childFolders.length === 0 && images.length === 0 ? (
-        <p className="text-zinc-500">
-          {currentFolder === null
-            ? "No images yet. Upload some above, or create a folder."
-            : "This folder is empty."}
-        </p>
-      ) : (
-        <div aria-busy={gallery.refreshing || gallery.loadingMore} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {/* Subfolder tiles first */}
-          {childFolders.map((f) => (
-            <div
-              key={f.id}
-              onClick={() => selectFolder(f.id)}
-              className="group relative flex flex-col justify-between rounded-lg border border-zinc-800 bg-zinc-900 p-3 h-40 cursor-pointer hover:border-zinc-600 transition"
-            >
-              <div className="flex items-start justify-between">
-                <svg className="w-8 h-8 text-zinc-500" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2Z" />
-                </svg>
-                {f.can_modify && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onDeleteFolder(f); }}
-                    className="text-xs text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition"
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
-              <div>
-                <p className="text-sm text-zinc-200 font-medium truncate">{f.name}</p>
-                <p className="text-xs text-zinc-500">
-                  {f.count} item{f.count === 1 ? "" : "s"}
-                </p>
-              </div>
-            </div>
-          ))}
-
-          {/* Image tiles */}
-          {images.map((img) => {
-            const visOp = visibilityOps[img.id];
-            const isSelected = selected.has(img.id);
-
-            return (
-              <figure
-                key={img.id}
-                className={`group relative rounded-lg overflow-hidden border bg-zinc-900 transition
-                  ${isSelected ? "border-zinc-300 ring-2 ring-zinc-300/40" : "border-zinc-800"}`}
-              >
-                {/* Selection checkbox overlay */}
-                {selectMode && img.can_modify && (
-                  <button
-                    onClick={() => toggleSelect(img.id)}
-                    className={`absolute top-2 left-2 z-10 w-5 h-5 rounded border-2 flex items-center justify-center transition
-                      ${isSelected
-                        ? "bg-zinc-200 border-zinc-200"
-                        : "bg-zinc-900/70 border-zinc-400 hover:border-zinc-200"}`}
-                    aria-label={isSelected ? "Deselect" : "Select"}
-                  >
-                    {isSelected && (
-                      <svg className="w-3 h-3 text-zinc-900" viewBox="0 0 12 12" fill="none">
-                        <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    )}
-                  </button>
-                )}
-
-                <a
-                  href={img.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(e) => selectMode && img.can_modify && (e.preventDefault(), toggleSelect(img.id))}
-                >
-                  <GalleryThumbnail image={img} />
-                </a>
-
-                <figcaption className="flex flex-col gap-1 px-2 py-1.5 text-xs text-zinc-400">
-                  {/* Visibility row */}
-                  <div className="flex items-center justify-between gap-1">
-                    <span className={img.visibility === "public" ? "text-emerald-400" : "text-amber-400"}>
-                      {img.visibility}
-                    </span>
-                    <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition">
-                      {/* Visibility toggle — only when can_modify */}
-                      {img.can_modify && (
-                        <button
-                          onClick={() => onToggleVisibility(img)}
-                          disabled={visOp?.loading}
-                          title={img.visibility === "public" ? "Make private" : "Make public"}
-                          className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-700 disabled:opacity-50 transition"
-                        >
-                          {visOp?.loading ? "…" : img.visibility === "public" ? "→ private" : "→ public"}
-                        </button>
-                      )}
-                      {/* Delete — gated on can_modify (owner or admin) */}
-                      {img.can_modify && (
-                        <button
-                          onClick={() => onDelete(img.id)}
-                          className="text-red-400 hover:text-red-300 transition"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* New URL after visibility toggle */}
-                  {visOp?.newUrl && (
-                    <div className="flex items-center gap-1.5 mt-0.5 border-t border-zinc-800 pt-1">
-                      <button
-                        onClick={() => copy(visOp.newUrl)}
-                        className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-700 transition"
-                      >
-                        {copied === visOp.newUrl ? "Copied" : "Copy"}
-                      </button>
-                      <span className="truncate font-mono text-zinc-500 text-[10px]">{visOp.newUrl}</span>
-                    </div>
-                  )}
-                </figcaption>
-              </figure>
-            );
-          })}
-        </div>
-      )}
-      {gallery.nextCursor && (
-        <div className="mt-6 text-center">
-          <button
-            onClick={gallery.loadMore}
-            disabled={gallery.loadingMore || gallery.refreshing}
-            className="rounded-md border border-zinc-700 bg-zinc-900 px-5 py-2 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {gallery.loadingMore ? "Loading…" : "Load more"}
-          </button>
-        </div>
-      )}
-    </main>
+      </label>
+      <p className="note">Photos moved into a public album become visible to anyone with that album link.</p>
+    </Modal>
   );
 }

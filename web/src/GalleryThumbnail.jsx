@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
-// The grid has a 1024px maximum width, 16px side padding and 12px gaps.
-const sizes = "(min-width: 1024px) 239px, (min-width: 768px) calc((100vw - 68px) / 4), (min-width: 640px) calc((100vw - 56px) / 3), calc((100vw - 44px) / 2)";
+// Grid columns: 4 wide (3 under 1151px, 2 under 801px), beside the 248px/224px sidebar.
+const sizes = "(min-width: 1151px) calc((100vw - 360px) / 4), (min-width: 801px) calc((100vw - 300px) / 3), calc((100vw - 48px) / 2)";
 
 export default function GalleryThumbnail({ image }) {
   const element = useRef(null);
@@ -36,7 +36,6 @@ export default function GalleryThumbnail({ image }) {
       loading={loading || "lazy"}
       decoding="async"
       onError={usePreviews ? () => setFailedSource(source) : undefined}
-      className="w-full h-40 object-cover"
     />
   );
 }

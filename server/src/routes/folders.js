@@ -10,6 +10,7 @@ import {
   folderShareIds,
   setFolderShares,
   updateFolderSharing,
+  renameFolder,
 } from "../folders.js";
 
 const router = Router();
@@ -48,19 +49,20 @@ router.post("/", requireAuth, (req, res) => {
     if (access) updateFolderSharing(folder.id, { access });
     res.status(201).json(getFolder(folder.id));
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(err.code === "DUPLICATE_NAME" ? 409 : 400).json({ error: err.message });
   }
 });
 
-// PATCH /api/folders/:id — sharing settings. Owner-or-admin.
-// Body: { access?, is_public?, public_upload?, shared_with?: [credentialId] }
+// PATCH /api/folders/:id — rename and/or sharing settings. Owner-or-admin.
+// Body: { name?, access?, is_public?, public_upload?, shared_with?: [credentialId] }
 router.patch("/:id", requireAuth, (req, res) => {
   const folder = getFolder(req.params.id);
   if (!folder) return res.status(404).json({ error: "not found" });
   if (!canModify(req.cred, folder)) return res.status(403).json({ error: "forbidden" });
 
-  const { access, is_public, public_upload, shared_with } = req.body || {};
+  const { name, access, is_public, public_upload, shared_with } = req.body || {};
   try {
+    if (name !== undefined) renameFolder(req.params.id, name);
     const updated = updateFolderSharing(req.params.id, { access, is_public, public_upload });
     if (Array.isArray(shared_with)) setFolderShares(req.params.id, shared_with);
     res.json({
@@ -70,7 +72,7 @@ router.patch("/:id", requireAuth, (req, res) => {
       shared_with: folderShareIds(req.params.id),
     });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(err.code === "DUPLICATE_NAME" ? 409 : 400).json({ error: err.message });
   }
 });
 

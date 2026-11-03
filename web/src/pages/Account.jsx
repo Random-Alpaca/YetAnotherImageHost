@@ -2,26 +2,18 @@ import { useState } from "react";
 import { api } from "../api.js";
 import { useAuth } from "../App.jsx";
 
-function SectionHeading({ children }) {
-  return <h2 className="text-base font-semibold mb-4 mt-8 first:mt-0">{children}</h2>;
-}
-
 function Field({ label, children }) {
-  return (
-    <label className="block text-sm">
-      <span className="block text-zinc-500 mb-1">{label}</span>
-      {children}
-    </label>
-  );
+  return <label className="field"><span>{label}</span>{children}</label>;
 }
 
-const inputCls =
-  "w-full rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 outline-none focus:border-zinc-600 text-sm";
+function Msg({ msg }) {
+  return msg ? <div className={msg.ok ? "form-ok" : "form-error"}>{msg.text}</div> : null;
+}
 
 export default function Account() {
   const auth = useAuth();
 
-  // ── Change password ──────────────────────────────────────────────────────
+  // ── Change password ──
   const [cpCurrent, setCpCurrent] = useState("");
   const [cpNew, setCpNew] = useState("");
   const [cpBusy, setCpBusy] = useState(false);
@@ -43,12 +35,12 @@ export default function Account() {
     }
   }
 
-  // ── Create account ───────────────────────────────────────────────────────
+  // ── Create account ──
   const [caUsername, setCaUsername] = useState("");
   const [caPassword, setCaPassword] = useState("");
   const [caRole, setCaRole] = useState("user");
   const [caBusy, setCaBusy] = useState(false);
-  const [caMsg, setCaMsg] = useState(null); // { ok, text }
+  const [caMsg, setCaMsg] = useState(null);
 
   async function submitCreateAccount(e) {
     e.preventDefault();
@@ -68,95 +60,56 @@ export default function Account() {
   }
 
   return (
-    <main className="max-w-lg mx-auto px-4 py-8">
-      {/* ── Change password ── */}
-      <SectionHeading>Change password</SectionHeading>
-      <form onSubmit={submitChangePassword} className="flex flex-col gap-3">
-        <Field label="Current password">
-          <input
-            type="password"
-            value={cpCurrent}
-            onChange={(e) => setCpCurrent(e.target.value)}
-            autoComplete="current-password"
-            placeholder="Current password"
-            className={inputCls}
-          />
-        </Field>
-        <Field label="New password">
-          <input
-            type="password"
-            value={cpNew}
-            onChange={(e) => setCpNew(e.target.value)}
-            autoComplete="new-password"
-            placeholder="New password"
-            className={inputCls}
-          />
-        </Field>
-        {cpMsg && (
-          <p className={`text-sm ${cpMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
-            {cpMsg.text}
-          </p>
-        )}
-        <button
-          type="submit"
-          disabled={cpBusy || !cpCurrent || !cpNew}
-          className="rounded-lg bg-zinc-100 text-zinc-900 font-medium py-2 text-sm disabled:opacity-50"
-        >
-          {cpBusy ? "Updating…" : "Update password"}
-        </button>
-      </form>
+    <>
+      <div className="page-heading"><div><h1>Account</h1></div></div>
 
-      {/* ── Create account ── */}
-      <SectionHeading>Create account</SectionHeading>
-      <p className="text-sm text-zinc-500 mb-4">
-        Anyone already logged in can create new accounts.
-        {!auth.isAdmin && " New accounts are created as regular users."}
-      </p>
-      <form onSubmit={submitCreateAccount} className="flex flex-col gap-3">
-        <Field label="Username">
-          <input
-            type="text"
-            value={caUsername}
-            onChange={(e) => setCaUsername(e.target.value)}
-            autoComplete="off"
-            placeholder="Username"
-            className={inputCls}
-          />
-        </Field>
-        <Field label="Password">
-          <input
-            type="password"
-            value={caPassword}
-            onChange={(e) => setCaPassword(e.target.value)}
-            autoComplete="new-password"
-            placeholder="Password"
-            className={inputCls}
-          />
-        </Field>
-        <Field label="Role">
-          <select
-            value={caRole}
-            onChange={(e) => setCaRole(e.target.value)}
-            disabled={!auth.isAdmin}
-            className={`${inputCls} disabled:opacity-50`}
-          >
-            <option value="user">User</option>
-            {auth.isAdmin && <option value="admin">Admin</option>}
-          </select>
-        </Field>
-        {caMsg && (
-          <p className={`text-sm ${caMsg.ok ? "text-emerald-400" : "text-red-400"}`}>
-            {caMsg.text}
-          </p>
-        )}
-        <button
-          type="submit"
-          disabled={caBusy || !caUsername.trim() || !caPassword}
-          className="rounded-lg bg-zinc-100 text-zinc-900 font-medium py-2 text-sm disabled:opacity-50"
-        >
-          {caBusy ? "Creating…" : "Create account"}
-        </button>
-      </form>
-    </main>
+      <section className="settings-panel">
+        <h2>Your account</h2>
+        <div className="settings-row"><span>Username</span><strong>{auth.username}</strong></div>
+        <div className="settings-row"><span>Role</span><strong>{auth.isAdmin ? "Admin" : "User"}</strong></div>
+      </section>
+
+      <section className="settings-panel">
+        <h2>Change password</h2>
+        <form onSubmit={submitChangePassword} className="narrow-form">
+          <Field label="Current password">
+            <input type="password" value={cpCurrent} onChange={(e) => setCpCurrent(e.target.value)} autoComplete="current-password" />
+          </Field>
+          <Field label="New password">
+            <input type="password" value={cpNew} onChange={(e) => setCpNew(e.target.value)} autoComplete="new-password" />
+          </Field>
+          <Msg msg={cpMsg} />
+          <button type="submit" className="btn btn-primary" disabled={cpBusy || !cpCurrent || !cpNew}>
+            {cpBusy ? "Updating…" : "Update password"}
+          </button>
+        </form>
+      </section>
+
+      <section className="settings-panel">
+        <h2>Create account</h2>
+        <p>
+          Anyone already logged in can create new accounts.
+          {!auth.isAdmin && " New accounts are created as regular users."}
+        </p>
+        <form onSubmit={submitCreateAccount} className="narrow-form">
+          <Field label="Username">
+            <input type="text" value={caUsername} onChange={(e) => setCaUsername(e.target.value)} autoComplete="off" />
+          </Field>
+          <Field label="Password">
+            <input type="password" value={caPassword} onChange={(e) => setCaPassword(e.target.value)} autoComplete="new-password" />
+          </Field>
+          <Field label="Role">
+            <select value={caRole} onChange={(e) => setCaRole(e.target.value)} disabled={!auth.isAdmin}>
+              <option value="user">User</option>
+              {auth.isAdmin && <option value="admin">Admin</option>}
+            </select>
+          </Field>
+          <Msg msg={caMsg} />
+          <button type="submit" className="btn btn-primary" disabled={caBusy || !caUsername.trim() || !caPassword}>
+            {caBusy ? "Creating…" : "Create account"}
+          </button>
+        </form>
+      </section>
+    </>
   );
 }

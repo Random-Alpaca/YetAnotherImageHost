@@ -59,90 +59,66 @@ export default function Admin() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-8">
-      <h1 className="text-lg font-semibold mb-4">User management</h1>
+    <>
+      <div className="page-heading"><div><h1>Administration</h1><p>User management</p></div></div>
 
-      {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+      {error && <div className="form-error">{error}</div>}
 
       {requests.length > 0 && (
-        <section className="mb-8 rounded-lg border border-amber-900/60 bg-amber-950/20 p-4">
-          <h2 className="text-sm font-medium text-amber-200 mb-3">
-            {requests.length} pending account request{requests.length === 1 ? "" : "s"}
-          </h2>
-          <ul className="space-y-2">
-            {requests.map((r) => (
-              <li key={r.id} className="flex items-center gap-3 text-sm">
-                <span className="font-mono text-zinc-200">{r.username}</span>
-                <span className="text-xs text-zinc-500">{fmtDate(r.created_at)}</span>
-                <button
-                  onClick={() => onReview(r.id, true)}
-                  className="ml-auto text-emerald-400 hover:text-emerald-300"
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={() => onReview(r.id, false)}
-                  className="text-zinc-500 hover:text-red-400"
-                >
-                  Reject
-                </button>
-              </li>
-            ))}
-          </ul>
+        <section className="settings-panel">
+          <h2>{requests.length} pending account request{requests.length === 1 ? "" : "s"}</h2>
+          <table>
+            <tbody>
+              {requests.map((r) => (
+                <tr key={r.id}>
+                  <td><strong>{r.username}</strong></td>
+                  <td className="dim">{fmtDate(r.created_at)}</td>
+                  <td className="row-actions">
+                    <button className="btn" onClick={() => onReview(r.id, true)}>Approve</button>
+                    <button className="btn btn-ghost" onClick={() => onReview(r.id, false)}>Reject</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </section>
       )}
 
-      {loading ? (
-        <p className="text-zinc-500">Loading…</p>
-      ) : users.length === 0 ? (
-        <p className="text-zinc-500">No users found.</p>
-      ) : (
-        <table className="w-full text-sm">
-          <thead className="text-zinc-500 text-left">
-            <tr className="border-b border-zinc-800">
-              <th className="py-2 font-medium">Username</th>
-              <th className="py-2 font-medium">Role</th>
-              <th className="py-2 font-medium">Created</th>
-              <th className="py-2 font-medium">Last used</th>
-              <th className="py-2 font-medium">Status</th>
-              <th className="py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className="border-b border-zinc-900">
-                <td className="py-2 font-mono">{u.username || <span className="text-zinc-600">—</span>}</td>
-                <td className="py-2">{u.role}</td>
-                <td className="py-2 text-zinc-400">{fmtDate(u.created_at)}</td>
-                <td className="py-2 text-zinc-400">{fmtDate(u.last_used_at)}</td>
-                <td className="py-2">
-                  {u.revoked_at
-                    ? <span className="text-zinc-600">revoked</span>
-                    : <span className="text-emerald-400">active</span>}
-                </td>
-                <td className="py-2 text-right space-x-3">
-                  {!u.revoked_at && (
-                    <button
-                      onClick={() => onRevoke(u.id, u.username)}
-                      className="text-red-400 hover:text-red-300"
-                    >
-                      Revoke
-                    </button>
-                  )}
-                  {u.username !== auth.username && (
-                    <button
-                      onClick={() => onDelete(u.id, u.username)}
-                      className="text-zinc-500 hover:text-red-400"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </main>
+      <section className="settings-panel">
+        <h2>Accounts</h2>
+        {loading ? (
+          <p>Loading…</p>
+        ) : users.length === 0 ? (
+          <p>No users found.</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Username</th><th>Role</th><th>Created</th><th>Last used</th><th>Status</th><th></th></tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td><strong>{u.username || "—"}</strong></td>
+                    <td>{u.role}</td>
+                    <td className="dim">{fmtDate(u.created_at)}</td>
+                    <td className="dim">{fmtDate(u.last_used_at)}</td>
+                    <td><span className="status">{u.revoked_at ? "Revoked" : "Active"}</span></td>
+                    <td className="row-actions">
+                      {!u.revoked_at && (
+                        <button className="btn" onClick={() => onRevoke(u.id, u.username)}>Revoke</button>
+                      )}
+                      {u.username !== auth.username && (
+                        <button className="btn btn-danger" onClick={() => onDelete(u.id, u.username)}>Delete</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
   );
 }

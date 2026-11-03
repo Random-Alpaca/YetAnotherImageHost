@@ -1,10 +1,13 @@
 // Public album view. Rendered outside <Protected> — no session required, the
 // slug in the URL is the credential. Logged-out visitors can reach nothing else.
 import { useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../api.js";
+import { useAuth } from "../App.jsx";
+import { Bare } from "../Chrome.jsx";
+import Icon from "../Icon.jsx";
 import UploadProgress from "../UploadProgress.jsx";
-import GalleryThumbnail from "../GalleryThumbnail.jsx";
+import { LoadMore, PhotoCard, Viewer } from "../Photos.jsx";
 import usePagedGallery from "../usePagedGallery.js";
 
 const fetchAlbum = (slug, options) => api.getAlbum(slug, options);
@@ -15,6 +18,7 @@ export default function Album() {
 }
 
 function AlbumContent({ slug }) {
+  const auth = useAuth();
   const gallery = usePagedGallery(slug, fetchAlbum);
   const { album, images, loading, total } = gallery;
   const [error, setError] = useState("");
@@ -22,6 +26,7 @@ function AlbumContent({ slug }) {
   const [progress, setProgress] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [failed, setFailed] = useState([]);
+  const [viewerIndex, setViewerIndex] = useState(null);
   const fileRef = useRef(null);
 
   async function uploadFiles(fileList) {
@@ -44,95 +49,83 @@ function AlbumContent({ slug }) {
     }
   }
 
-  if (loading) return <div className="min-h-screen grid place-items-center text-zinc-500">Loading…</div>;
+  if (loading) return <Bare><p className="dim">Loading…</p></Bare>;
   if (!album) return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-zinc-500">
-      <p role="alert">{gallery.error || "Album unavailable."}</p>
-      <button onClick={() => gallery.refresh()} className="text-sm underline">Try again</button>
-    </div>
+    <Bare>
+      <div className="empty">
+        <Icon name="image" />
+        <h2>Album unavailable</h2>
+        <p role="alert">{gallery.error || "This album could not be found."}</p>
+        <button className="btn" onClick={() => gallery.refresh()}>Try again</button>
+      </div>
+    </Bare>
   );
 
   return (
-    <main className="max-w-5xl mx-auto px-4 py-8">
-      <h1 className="text-lg font-semibold mb-1">{album.name}</h1>
-      <p className="text-xs text-zinc-500 mb-6">
-        {total} photo{total === 1 ? "" : "s"}
-        {images.length < total && ` · ${images.length} loaded`}
-        {album.can_upload && " · anyone with this link can add photos"}
-      </p>
+    <Bare>
+      <div className="album-top">
+        <span>Public album</span>
+        {auth.isAuthed
+          ? <Link className="btn" to="/">Back to library</Link>
+          : <Link className="text-link" to="/login">Sign in</Link>}
+      </div>
+      <div className="album-banner">
+        <h1>{album.name}</h1>
+        <p>
+          {total} photo{total === 1 ? "" : "s"}
+          {images.length < total && ` · ${images.length} loaded`}
+          {album.can_upload && " · anyone with this link can add photos"}
+        </p>
+      </div>
 
       {album.can_upload && (
         <div
+          className={`upload-strip ${dragActive ? "dragover" : ""}`}
           onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-          onDragLeave={(e) => { e.preventDefault(); setDragActive(false); }}
+          onDragLeave={() => setDragActive(false)}
           onDrop={(e) => { e.preventDefault(); setDragActive(false); if (!uploading) uploadFiles(e.dataTransfer.files); }}
-          onClick={() => !uploading && fileRef.current?.click()}
-          className={`mb-6 cursor-pointer rounded-xl border-2 border-dashed px-6 py-10 text-center transition
-            ${dragActive ? "border-zinc-300 bg-zinc-800/50" : "border-zinc-700 bg-zinc-900/40 hover:border-zinc-500"}
-            ${uploading ? "opacity-60 pointer-events-none" : ""}`}
         >
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif,.heic,.heif"
-            onChange={(e) => uploadFiles(e.target.files)}
-            className="hidden"
-          />
-          <p className="text-sm text-zinc-300">
-            {uploading ? "Uploading…" : "Drag & drop photos here, or click to choose"}
-          </p>
-          <p className="mt-1 text-xs text-zinc-500">PNG, JPEG, GIF, WebP, HEIC</p>
+          <button className="strip-main" disabled={uploading} onClick={() => fileRef.current?.click()}>
+            <span><Icon name="upload" /></span>
+            <span>
+              <strong>{uploading ? "Uploading…" : "Add photos"}</strong>
+              <small>Drop files here or choose images · PNG, JPG, GIF, WebP, HEIC</small>
+            </span>
+          </button>
+          <input ref={fileRef} type="file" multiple hidden onChange={(e) => uploadFiles(e.target.files)}
+                 accept="image/png,image/jpeg,image/gif,image/webp,image/heic,image/heif,.heic,.heif" />
         </div>
       )}
 
       <UploadProgress progress={progress} />
-
-      {error && <p role="alert" className="text-sm text-red-400 mb-4">{error}</p>}
+      {error && <p role="alert" className="form-error">{error}</p>}
       {gallery.error && (
-        <p role="alert" className="text-sm text-red-400 mb-4">
-          {gallery.error}{" "}
-          <button onClick={() => gallery.refresh()} className="underline hover:text-red-300">Retry loading photos</button>
+        <p role="alert" className="form-error">
+          {gallery.error} <button className="link-button" onClick={() => gallery.refresh()}>Retry loading photos</button>
         </p>
       )}
+      {failed.map((r, i) => <p key={i} className="form-error">{r.name}: {r.error}</p>)}
 
-      {failed.length > 0 && (
-        <ul className="mb-6 space-y-1">
-          {failed.map((r, i) => (
-            <li key={i} className="text-xs text-red-400">{r.name}: {r.error}</li>
-          ))}
-        </ul>
-      )}
-
-      {gallery.refreshing && <p role="status" className="text-xs text-zinc-500 mb-3">Updating photos…</p>}
+      {gallery.refreshing && <p role="status" className="dim">Updating photos…</p>}
       {images.length === 0 ? (
-        <p className="text-zinc-500">No photos in this album yet.</p>
+        <div className="empty"><Icon name="image" /><h2>No photos yet</h2><p>This album is empty.</p></div>
       ) : (
-        <div aria-busy={gallery.refreshing || gallery.loadingMore} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {images.map((img) => (
-            <a
-              key={img.id}
-              href={img.url}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-lg overflow-hidden border border-zinc-800 bg-zinc-900 block"
-            >
-              <GalleryThumbnail image={img} />
-            </a>
-          ))}
-        </div>
+        <>
+          <div aria-busy={gallery.refreshing || gallery.loadingMore} className="photo-grid">
+            {images.map((img, i) => <PhotoCard key={img.id} image={img} onOpen={() => setViewerIndex(i)} />)}
+          </div>
+          <LoadMore gallery={gallery} />
+        </>
       )}
-      {gallery.nextCursor && (
-        <div className="mt-6 text-center">
-          <button
-            onClick={gallery.loadMore}
-            disabled={gallery.loadingMore || gallery.refreshing}
-            className="rounded-md border border-zinc-700 bg-zinc-900 px-5 py-2 text-sm text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {gallery.loadingMore ? "Loading…" : "Load more"}
-          </button>
-        </div>
+
+      {viewerIndex !== null && images[viewerIndex] && (
+        <Viewer
+          images={images}
+          index={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+          onStep={(n) => setViewerIndex((i) => (i === null ? i : (i + n + images.length) % images.length))}
+        />
       )}
-    </main>
+    </Bare>
   );
 }

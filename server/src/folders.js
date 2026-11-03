@@ -6,10 +6,24 @@ function newId() {
   return crypto.randomBytes(8).toString("hex");
 }
 
+// Siblings (same parent; all top-level folders share the root) must have
+// distinct names, case-insensitively. `exceptId` lets a folder keep its own name.
+function assertNameFree(name, parentId, exceptId = null) {
+  const clash = db
+    .prepare(`SELECT 1 FROM folders WHERE lower(name) = lower(?) AND parent_id IS ? AND id IS NOT ?`)
+    .get(name, parentId || null, exceptId);
+  if (clash) {
+    const err = new Error("a folder with that name already exists here");
+    err.code = "DUPLICATE_NAME";
+    throw err;
+  }
+}
+
 export function createFolder({ name, ownerId = null, parentId = null }) {
   if (!name || typeof name !== "string" || !name.trim()) {
     throw new Error("folder name is required");
   }
+  assertNameFree(name.trim(), parentId);
   const id = newId();
   const now = Date.now();
   db.prepare(
@@ -47,6 +61,14 @@ export function listFolders() {
   }
 
   return folders.map((f) => ({ ...f, count: total(f.id) }));
+}
+
+export function renameFolder(id, name) {
+  if (!name || typeof name !== "string" || !name.trim()) throw new Error("folder name is required");
+  const folder = getFolder(id);
+  assertNameFree(name.trim(), folder.parent_id, id);
+  db.prepare(`UPDATE folders SET name = ? WHERE id = ?`).run(name.trim(), id);
+  return getFolder(id);
 }
 
 export function getFolder(id) {
