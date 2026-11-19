@@ -66,7 +66,7 @@ when the app authorizes a request and returns an `X-Accel-Redirect` into the
 | GET    | `/api/images/list`            | yes          | Page of images (`?folder=<id>\|none&limit=48&cursor=…`) |
 | PATCH  | `/api/images/:id`             | owner/admin  | Set an image's folder                                |
 | PATCH  | `/api/images/:id/visibility`  | owner/admin  | Toggle public/private (moves the file)               |
-| POST   | `/api/images/bulk`            | owner/admin² | Bulk `delete` or `move` (²checked per image)         |
+| POST   | `/api/images/bulk`            | owner/admin² | Bulk `delete`, `move`, `public` or `private` (²per image) |
 | DELETE | `/api/images/:id`             | owner/admin  | Delete an image                                      |
 | GET    | `/api/folders`                | yes          | List folders (with recursive image counts)           |
 | POST   | `/api/folders`                | yes          | Create a folder                                      |

@@ -10,8 +10,11 @@ export async function copyText(text) {
 }
 
 // One tile. `onSelect` is passed only where selection is possible (owner/admin).
-export function PhotoCard({ image, selected, onOpen, onSelect, showVisibility }) {
+export function PhotoCard({ image, selected, onOpen, onSelect, showVisibility, onToggleVisibility }) {
   const name = image.original_name || image.id;
+  const pub = image.visibility === "public";
+  const label = pub ? "Public file" : "Private file";
+  const badge = <><Icon name={pub ? "globe" : "lock"} />{label}</>;
   return (
     <article className={`photo-card ${selected ? "selected" : ""}`}>
       <button className="photo-open" onClick={onOpen} aria-label={`View ${name}`}>
@@ -25,7 +28,11 @@ export function PhotoCard({ image, selected, onOpen, onSelect, showVisibility })
       <div className="photo-info">
         <strong>{name}</strong>
         {showVisibility && (
-          <small><Icon name={image.visibility === "public" ? "globe" : "lock"} />{image.visibility === "public" ? "Public file" : "Private file"}</small>
+          onToggleVisibility ? (
+            <small>
+              <button className="vis-toggle" onClick={onToggleVisibility} title={`Make ${pub ? "private" : "public"}`} aria-label={`${label} — click to make ${pub ? "private" : "public"}`}>{badge}</button>
+            </small>
+          ) : <small>{badge}</small>
         )}
       </div>
     </article>

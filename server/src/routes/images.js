@@ -72,14 +72,14 @@ router.patch("/:id", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/images/bulk — per-item owner-or-admin; delete or move.
+// POST /api/images/bulk — per-item owner-or-admin; delete, move, or set visibility.
 router.post("/bulk", requireAuth, (req, res) => {
   const { action, ids, folder_id } = req.body || {};
   if (!action || !Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: "action and ids[] required" });
   }
-  if (!["delete", "move"].includes(action)) {
-    return res.status(400).json({ error: "action must be 'delete' or 'move'" });
+  if (!["delete", "move", "public", "private"].includes(action)) {
+    return res.status(400).json({ error: "action must be 'delete', 'move', 'public' or 'private'" });
   }
 
   const results = ids.map((id) => {
@@ -89,6 +89,8 @@ router.post("/bulk", requireAuth, (req, res) => {
     try {
       if (action === "delete") {
         deleteImage(id);
+      } else if (action === "public" || action === "private") {
+        if (img.visibility !== action) setVisibility(img, action);
       } else {
         setFolder(id, folder_id !== undefined ? folder_id : img.folder_id);
       }

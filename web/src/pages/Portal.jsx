@@ -320,6 +320,7 @@ function Library({ galleryKey }) {
                     key={img.id}
                     image={img}
                     showVisibility
+                    onToggleVisibility={img.can_modify ? () => onToggleVisibility(img) : undefined}
                     selected={selected.has(img.id)}
                     onSelect={img.can_modify ? () => { toggleSelect(img.id); setSelectMode(true); } : undefined}
                     onOpen={() => (selectMode && img.can_modify ? toggleSelect(img.id) : setViewerIndex(i))}
@@ -364,9 +365,12 @@ function Library({ galleryKey }) {
           <button className="icon-button" onClick={clearSelection} aria-label="Clear selection"><Icon name="close" /></button>
           <span>{selected.size} selected</span>
           <span className="divider" />
-          <button data-hide-mobile onClick={() => setSelected(new Set(images.filter((i) => i.can_modify).map((i) => i.id)))}>Select loaded</button>
-          <button onClick={() => setDialog("move")} disabled={bulkBusy}><Icon name="move" />Move</button>
-          <button onClick={onBulkDelete} disabled={bulkBusy}><Icon name="trash" />Delete</button>
+          <button aria-label="Select all" data-hide-mobile onClick={() => setSelected(new Set(images.filter((i) => i.can_modify).map((i) => i.id)))}><Icon name="check" /><span className="lbl">Select all</span></button>
+          <button aria-label="Move" onClick={() => setDialog("move")} disabled={bulkBusy}><Icon name="move" /><span className="lbl">Move</span></button>
+          <button aria-label="Get all links" onClick={() => onCopy(images.filter((i) => selected.has(i.id)).map((i) => absUrl(i.url)).join("\n"))}><Icon name="copy" /><span className="lbl">Get all links</span></button>
+          <button aria-label="Make public" onClick={() => bulk("public")} disabled={bulkBusy}><Icon name="globe" /><span className="lbl">Make public</span></button>
+          <button aria-label="Make private" onClick={() => bulk("private")} disabled={bulkBusy}><Icon name="lock" /><span className="lbl">Make private</span></button>
+          <button aria-label="Delete" onClick={onBulkDelete} disabled={bulkBusy}><Icon name="trash" /><span className="lbl">Delete</span></button>
         </div>
       )}
 
